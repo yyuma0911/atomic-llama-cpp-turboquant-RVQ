@@ -368,6 +368,18 @@ typedef struct {
 } block_tq4_1s;                         // 20 bytes total
 static_assert(sizeof(block_tq4_1s) == 20, "wrong tq4_1s block size");
 
+// TQ3_RVQ: Residual Vector Quantization for 3-bit weights, block_size=256
+// Structure: 3-bit uniform quantization + 4-bit RVQ (8 blocks) + 2-bit RVQ (32 sub-blocks)
+// = 3.4375 bpw (110 bytes per 256 values)
+#define QK_TQ3_RVQ 256
+typedef struct {
+    ggml_half d;             //  2 bytes: super-block scale
+    uint8_t     qs[96];        // 96 bytes: 256 values × 3-bit, packed LSB-first
+    uint8_t     scales2[4];    //  4 bytes: 8 blocks × 4-bit RVQ indices
+    uint8_t     scales3[8];    //  8 bytes: 32 sub-blocks × 2-bit RVQ indices
+} block_tq3_rvq;              // 110 bytes total
+static_assert(sizeof(block_tq3_rvq) == 110, "wrong tq3_rvq block size");
+
 //
 // Super-block quantization structures
 //

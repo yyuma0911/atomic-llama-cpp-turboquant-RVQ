@@ -134,6 +134,172 @@ static __device__ __forceinline__ uint8_t tq3_extract_index(const uint8_t * __re
 }
 
 // ============================================================================
+// TQ3_RVQ: 3-bit weight + 4-bit RVQ + 2-bit RVQ, block_size=256
+// 1 thread = 1 element, 1 warp processes 32-element sub-blocks (8 per RVQ block)
+// ============================================================================
+
+// Extract 3-bit base index from tq3_rvq block (LSB-first, 8 values / 3 bytes)
+static __device__ __forceinline__ uint8_t tq3_rvq_extract_q(
+        const block_tq3_rvq * blk, int i_in_block) {
+    const int byte_idx = (i_in_block * 3) >> 3;
+    const int bit_off  = (i_in_block * 3) & 7;
+    uint32_t packed = (uint32_t)blk->qs[byte_idx];
+    if (bit_off > 5) {
+        packed |= ((uint32_t)blk->qs[byte_idx + 1]) << 8;
+    }
+    return (packed >> bit_off) & 7;
+}
+
+// Extract 4-bit RVQ stage 2 scale index (per 32-element block)
+static __device__ __forceinline__ int tq3_rvq_extract_s2(
+        const block_tq3_rvq * blk, int i_in_block) {
+    const int b2      = i_in_block >> 5;
+    const int byte2   = b2 >> 1;
+    const int nib_off = (b2 & 1) << 2;
+    return (blk->scales2[byte2] >> nib_off) & 0xF;
+}
+
+// Extract 2-bit RVQ stage 3 scale index (per 8-element sub-block)
+static __device__ __forceinline__ int tq3_rvq_extract_s3(
+        const block_tq3_rvq * blk, int i_in_block) {
+    const int b3      = i_in_block >> 3;
+    const int byte3   = b3 >> 2;
+    const int bit_off = (b3 & 3) << 1;
+    return (blk->scales3[byte3] >> bit_off) & 0x3;
+}
+
+template <int ncols_dst>
+static __global__ void mul_mat_tq3_rvq_multi(
+        const void  * __restrict__ vx,
+        const half  * __restrict__ vy_rot,
+        float       * __restrict__ dst,
+        const int ncols_x,
+        const int nrows_x,
+        const int stride_col_y,
+        const int stride_col_dst) {
+
+    __shared__ float s_lut3[8];
+    __shared__ float s_cb2[16];
+    __shared__ float s_cb3[4];
+    if (threadIdx.y == 0) {
+        if (threadIdx.x < 8)  s_lut3[threadIdx.x] = TQ3_CENTROIDS_WEIGHT[threadIdx.x];
+        if (threadIdx.x < 16) s_cb2[threadIdx.x]  = TQ3_RVQ_CB2[threadIdx.x];
+        if (threadIdx.x < 4)  s_cb3[threadIdx.x]  = TQ3_RVQ_CB3[threadIdx.x];
+    }
+    __syncthreads();
+
+    const int row  = blockIdx.x * MMVQ_TQ_NWARPS + threadIdx.y;
+    if (row >= nrows_x) return;
+
+    const int lane = threadIdx.x;
+    const int blocks_per_row = ncols_x / QK_TQ3_RVQ;
+    const block_tq3_rvq * x_row = ((const block_tq3_rvq *) vx) + (int64_t)row * blocks_per_row;
+
+    float sumf[ncols_dst] = {};
+
+    for (int ib = 0; ib < blocks_per_row; ib++) {
+        const block_tq3_rvq * blk = &x_row[ib];
+        const float d = __half2float(blk->d);
+
+        // Each warp processes all 8 sub-blocks within one RVQ block (256 elements)
+        #pragma unroll
+        for (int subblk = 0; subblk < 8; subblk++) {
+            const int i_in_block = subblk * 32 + lane;
+
+            const uint8_t q    = tq3_rvq_extract_q(blk, i_in_block);
+            const int     idx2 = tq3_rvq_extract_s2(blk, i_in_block);
+            const int     idx3 = tq3_rvq_extract_s3(blk, i_in_block);
+
+            const float w = s_lut3[q] * d * s_cb2[idx2] * s_cb3[idx3];
+
+            #pragma unroll
+            for (int j = 0; j < ncols_dst; j++) {
+                const float act = __half2float(vy_rot[j * stride_col_y + ib * QK_TQ3_RVQ + i_in_block]);
+                sumf[j] += act * w;
+            }
+        }
+    }
+
+    #pragma unroll
+    for (int offset = 16; offset > 0; offset >>= 1) {
+        #pragma unroll
+        for (int j = 0; j < ncols_dst; j++)
+            sumf[j] += __shfl_xor_sync(0xffffffff, sumf[j], offset);
+    }
+
+    if (lane == 0) {
+        #pragma unroll
+        for (int j = 0; j < ncols_dst; j++)
+            dst[j * stride_col_dst + row] = sumf[j];
+    }
+}
+
+// Launch helper
+template <int ncols_dst>
+static void launch_tq3_rvq_multi(
+        const void * src0_d, const half * act_buf,
+        float * dst_d, int ncols_x, int nrows_x,
+        int stride_col_y, int stride_col_dst, cudaStream_t stream) {
+    const dim3 block(WARP_SIZE, MMVQ_TQ_NWARPS);
+    const dim3 grid((nrows_x + MMVQ_TQ_NWARPS - 1) / MMVQ_TQ_NWARPS);
+    mul_mat_tq3_rvq_multi<ncols_dst><<<grid, block, 0, stream>>>(
+        src0_d, act_buf, dst_d, ncols_x, nrows_x, stride_col_y, stride_col_dst);
+}
+
+void ggml_cuda_mul_mat_tq3_rvq(ggml_backend_cuda_context & ctx,
+                                const ggml_tensor * src0,
+                                const ggml_tensor * src1,
+                                ggml_tensor * dst) {
+    GGML_ASSERT(src0->type == GGML_TYPE_TQ3_RVQ);
+    GGML_ASSERT(src1->type == GGML_TYPE_F32);
+    GGML_ASSERT(dst->type  == GGML_TYPE_F32);
+    GGML_ASSERT(src0->ne[0] % QK_TQ3_RVQ == 0);
+
+    const int ncols_x   = src0->ne[0];
+    const int nrows_x   = src0->ne[1];
+    const int ncols_dst = src1->ne[1];
+    GGML_ASSERT(ncols_x % 32 == 0);
+
+    const void  * src0_d = src0->data;
+    const float * src1_d = (const float *) src1->data;
+    float       * dst_d  = (float *) dst->data;
+    cudaStream_t stream = ctx.stream();
+
+    const int id = ggml_cuda_get_device();
+    const int n_total_elements = ncols_x * ncols_dst;
+
+    // Phase 1: Pre-rotate all tokens (reuse existing tq_prerotate_activation kernel)
+    ggml_cuda_pool_alloc<half> act_buf(ctx.pool(id), n_total_elements);
+    {
+        const int n_total_blocks = n_total_elements / 32;
+        const int wpb = 4;
+        const dim3 block(32, wpb);
+        const dim3 grid((n_total_blocks + wpb - 1) / wpb);
+        tq_prerotate_activation<<<grid, block, 0, stream>>>(src1_d, act_buf.get(), n_total_elements);
+    }
+
+    // Phase 2: TQ3_RVQ mul_mat kernel dispatch
+    // VGPR limit: gfx1030 max 128 VGPRs/wave. kernel<+>4 uses 128 VGPRs;
+    // kernel<+>8 would exceed this and spill to scratch, causing ~4× slowdown.
+    // Always split into groups of ≤4 to avoid spilling entirely.
+    const int stride_col_y   = ncols_x;
+    const int stride_col_dst = nrows_x;
+
+    const int max_batch = 4;
+    for (int j = 0; j < ncols_dst; j += max_batch) {
+        const int batch = min(max_batch, ncols_dst - j);
+        const half * act_j = act_buf.get() + j * ncols_x;
+        float * dst_j = dst_d + j * nrows_x;
+        switch (batch) {
+            case 1: launch_tq3_rvq_multi<1>(src0_d, act_j, dst_j, ncols_x, nrows_x, stride_col_y, stride_col_dst, stream); break;
+            case 2: launch_tq3_rvq_multi<2>(src0_d, act_j, dst_j, ncols_x, nrows_x, stride_col_y, stride_col_dst, stream); break;
+            case 3: launch_tq3_rvq_multi<3>(src0_d, act_j, dst_j, ncols_x, nrows_x, stride_col_y, stride_col_dst, stream); break;
+            case 4: launch_tq3_rvq_multi<4>(src0_d, act_j, dst_j, ncols_x, nrows_x, stride_col_y, stride_col_dst, stream); break;
+        }
+    }
+}
+
+// ============================================================================
 // Multi-token TQ4_1S dp4a kernel (ncols_dst ≤ 8)
 // Weight data loaded once per block, reused across all ncols_dst tokens.
 // ============================================================================

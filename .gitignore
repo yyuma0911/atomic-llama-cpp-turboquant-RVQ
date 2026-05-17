@@ -131,6 +131,12 @@ poetry.toml
 /winogrande-debiased-eval.csv
 /wikitext-2-raw/
 
+# Benchmarks
+/ggml/src/ggml-cuda/bench_tq3_rvq.cu
+
+# Docs
+/docs/tq3_rvq-report.md
+
 # Test models for lora adapters
 /lora-tests
 

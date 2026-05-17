@@ -429,6 +429,24 @@ static __device__ __forceinline__ float turbo2_dequant_element(
 #define QR_TQ4_1S 1  // dequantize produces 2 consecutive elements
 #define QR_TQ3_1S 1
 
+// TQ3_RVQ: Residual Vector Quantization for 3-bit weights, block_size=256
+// 3-bit uniform quantization + 4-bit RVQ (8 blocks) + 2-bit RVQ (32 sub-blocks)
+#define QR_TQ3_RVQ 1
+
+// TQ3_RVQ codebook scales (must match CPU compile-time defaults in ggml-turbo-quant.c)
+// Stage 2: 16-level 4-bit scale per 32-element block, range ~[0.70, 1.40]
+// Stage 3: 4-level 2-bit scale per 8-element sub-block, range ~[0.88, 1.12]
+// When tq3_rvq_set_codebook() is called with trained values, must be synced
+// to GPU constant memory via cudaMemcpyToSymbol before inference.
+__constant__ float TQ3_RVQ_CB2[16] = {
+    0.70f, 0.78f, 0.85f, 0.90f, 0.94f, 0.97f, 0.99f, 1.00f,
+    1.02f, 1.04f, 1.07f, 1.11f, 1.16f, 1.23f, 1.31f, 1.40f
+};
+
+__constant__ float TQ3_RVQ_CB3[4] = {
+    0.88f, 0.95f, 1.05f, 1.12f
+};
+
 // ---- Weight centroids: Lloyd-Max for N(0,1) ----
 
 static __constant__ float TQ4_CENTROIDS_WEIGHT[16] = {

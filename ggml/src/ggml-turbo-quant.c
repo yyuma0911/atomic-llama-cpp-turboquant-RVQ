@@ -14,6 +14,7 @@
 #include <math.h>
 #include <string.h>
 #include <assert.h>
+#include <float.h>
 #include <stdlib.h>
 
 #ifndef M_PI
@@ -1020,6 +1021,333 @@ size_t quantize_tq4_1s(const float * GGML_RESTRICT src, void * GGML_RESTRICT dst
             src + row * n_per_row,
             (block_tq4_1s *)((char *)dst + row * row_size),
             n_per_row
+        );
+    }
+    return nrows * row_size;
+}
+
+// ============================================================
+// TQ3_RVQ: Residual Vector Quantization for 3-bit weights
+// ============================================================
+
+// Default codebooks for TQ3_RVQ
+// Stage 2 (16-level): multiplicative scale correction for 32-element blocks
+// Values are centered around 1.0 with denser sampling near 1.0, range ~[0.70, 1.40]
+static const float TQ3_RVQ_CB2_DEFAULT[16] = {
+    0.70f, 0.78f, 0.85f, 0.90f, 0.94f, 0.97f, 0.99f, 1.00f,
+    1.02f, 1.04f, 1.07f, 1.11f, 1.16f, 1.23f, 1.31f, 1.40f
+};
+
+// Stage 3 (4-level): fine-grained multiplicative scale for 8-element sub-blocks, range ~[0.88, 1.12]
+static const float TQ3_RVQ_CB3_DEFAULT[4] = {
+    0.88f, 0.95f, 1.05f, 1.12f
+};
+
+// Global codebooks for RVQ stages (initialized with static defaults at compile time)
+// Use tq3_rvq_set_codebook() to override with model-specific values at runtime
+static float tq3_rvq_cb2[16] = {
+    0.70f, 0.78f, 0.85f, 0.90f, 0.94f, 0.97f, 0.99f, 1.00f,
+    1.02f, 1.04f, 1.07f, 1.11f, 1.16f, 1.23f, 1.31f, 1.40f
+};
+static float tq3_rvq_cb3[4] = {
+    0.88f, 0.95f, 1.05f, 1.12f
+};
+static bool  tq3_rvq_cb_initialized = true;
+
+void tq3_rvq_set_codebook(const float * cb2, const float * cb3) {
+    memcpy(tq3_rvq_cb2, cb2, sizeof(tq3_rvq_cb2));
+    memcpy(tq3_rvq_cb3, cb3, sizeof(tq3_rvq_cb3));
+    tq3_rvq_cb_initialized = true;
+}
+
+static void quantize_row_tq3_rvq_impl(const float * GGML_RESTRICT x, block_tq3_rvq * GGML_RESTRICT y, int64_t k, const float * imatrix) {
+    assert(k % QK_TQ3_RVQ == 0);
+    const int nb = k / QK_TQ3_RVQ;
+    for (int blk = 0; blk < nb; blk++) {
+        const float * src = x + blk * QK_TQ3_RVQ;
+        const float * blk_imatrix = imatrix ? (imatrix + blk * QK_TQ3_RVQ) : NULL;
+        block_tq3_rvq * dst = &y[blk];
+
+        // 1. Forward RHT per 32-element sub-block (same pattern as TQ3_1S/TQ4_1S)
+        float buf[QK_TQ3_RVQ];
+        memcpy(buf, src, QK_TQ3_RVQ * sizeof(float));
+        for (int g = 0; g < 8; g++) {
+            tq3_0_rht_forward(buf + g * 32);
+        }
+
+        // Compute rotated importance weights (mean over each 32-element sub-block)
+        float w[QK_TQ3_RVQ];
+        if (blk_imatrix) {
+            for (int g = 0; g < 8; g++) {
+                float sum_w = 0.0f;
+                for (int i = 0; i < 32; i++) {
+                    sum_w += blk_imatrix[g * 32 + i];
+                }
+                float mean_w = sum_w / 32.0f;
+                for (int i = 0; i < 32; i++) {
+                    w[g * 32 + i] = mean_w;
+                }
+            }
+        } else {
+            for (int i = 0; i < QK_TQ3_RVQ; i++) {
+                w[i] = 1.0f;
+            }
+        }
+
+        // 2. Compute super-block scale (RMS norm) on rotated data
+        float sum = 0.0f;
+        for (int i = 0; i < QK_TQ3_RVQ; i++) {
+            sum += buf[i] * buf[i];
+        }
+        float rms = sqrtf(sum / QK_TQ3_RVQ);
+
+        // Smart initialization of s2_vals and s3_vals using local RMS ratios
+        float s2_vals[8];
+        float s3_vals[32];
+        for (int b2 = 0; b2 < 8; b2++) {
+            float local_sum = 0.0f;
+            for (int i = 0; i < 32; i++) {
+                local_sum += buf[b2 * 32 + i] * buf[b2 * 32 + i];
+            }
+            float local_rms = sqrtf(local_sum / 32.0f);
+            float ratio = (rms > 1e-10f) ? (local_rms / rms) : 1.0f;
+            int best_idx = 0;
+            float best_diff = FLT_MAX;
+            for (int ci = 0; ci < 16; ci++) {
+                float diff = fabsf(tq3_rvq_cb2[ci] - ratio);
+                if (diff < best_diff) {
+                    best_diff = diff;
+                    best_idx = ci;
+                }
+            }
+            s2_vals[b2] = tq3_rvq_cb2[best_idx];
+        }
+        for (int b3 = 0; b3 < 32; b3++) {
+            int b2 = b3 / 4;
+            float sub_sum = 0.0f;
+            for (int i = 0; i < 8; i++) {
+                sub_sum += buf[b3 * 8 + i] * buf[b3 * 8 + i];
+            }
+            float sub_rms = sqrtf(sub_sum / 8.0f);
+            float target_rms = rms * s2_vals[b2];
+            float ratio = (target_rms > 1e-10f) ? (sub_rms / target_rms) : 1.0f;
+            int best_idx = 0;
+            float best_diff = FLT_MAX;
+            for (int ci = 0; ci < 4; ci++) {
+                float diff = fabsf(tq3_rvq_cb3[ci] - ratio);
+                if (diff < best_diff) {
+                    best_diff = diff;
+                    best_idx = ci;
+                }
+            }
+            s3_vals[b3] = tq3_rvq_cb3[best_idx];
+        }
+
+        // 3. Grid search on initial scale (RMS) with imatrix support (9 points)
+        static const float scales[] = { 0.6f, 0.7f, 0.8f, 0.9f, 1.0f, 1.1f, 1.2f, 1.35f, 1.5f };
+        float best_rms = rms;
+        float best_err = FLT_MAX;
+        for (int si = 0; si < 9; si++) {
+            float test_rms = rms * scales[si];
+            float err = 0.0f;
+            for (int i = 0; i < QK_TQ3_RVQ; i++) {
+                float scale = test_rms * s2_vals[i / 32] * s3_vals[i / 8];
+                float val = (scale > 1e-10f) ? (buf[i] / scale) : 0.0f;
+                int q = tq3_0_choose_index(val);
+                float restored = TQ3_0_CENTROIDS[q] * scale;
+                float diff = buf[i] - restored;
+                err += w[i] * diff * diff;
+            }
+            if (err < best_err) {
+                best_err = err;
+                best_rms = test_rms;
+            }
+        }
+        rms = best_rms;
+
+        // Local flat arrays for holding temporary states
+        uint8_t q_vals[QK_TQ3_RVQ];
+
+        // 4. Iterative refinement (6 iterations)
+        const int N_ITER = 6;
+        for (int iter = 0; iter < N_ITER; iter++) {
+            // Step A: Optimize 3-bit base indices q_vals
+            for (int i = 0; i < QK_TQ3_RVQ; i++) {
+                float scale = rms * s2_vals[i / 32] * s3_vals[i / 8];
+                float val = (scale > 1e-10f) ? (buf[i] / scale) : 0.0f;
+                q_vals[i] = tq3_0_choose_index(val);
+            }
+
+            // Step B: Optimize s2_vals (RVQ Stage 2, 4-bit per 32-element block)
+            // Mathematically rigorous O(1) quadratic search per centroid config
+            for (int b2 = 0; b2 < 8; b2++) {
+                float sum_wXY = 0.0f;
+                float sum_wYY = 0.0f;
+                for (int i = 0; i < 32; i++) {
+                    int idx = b2 * 32 + i;
+                    float Y = TQ3_0_CENTROIDS[q_vals[idx]] * rms * s3_vals[idx / 8];
+                    float wY = w[idx] * Y;
+                    sum_wXY += buf[idx] * wY;
+                    sum_wYY += Y * wY;
+                }
+                int best_idx = 0;
+                float best_s2_err = FLT_MAX;
+                for (int ci = 0; ci < 16; ci++) {
+                    float s2 = tq3_rvq_cb2[ci];
+                    float err = s2 * s2 * sum_wYY - 2.0f * s2 * sum_wXY;
+                    if (err < best_s2_err) {
+                        best_s2_err = err;
+                        best_idx = ci;
+                    }
+                }
+                s2_vals[b2] = tq3_rvq_cb2[best_idx];
+            }
+
+            // Step C: Optimize s3_vals (RVQ Stage 3, 2-bit per 8-element sub-block)
+            // Mathematically rigorous O(1) quadratic search per centroid config
+            for (int b3 = 0; b3 < 32; b3++) {
+                float sum_wXY = 0.0f;
+                float sum_wYY = 0.0f;
+                for (int i = 0; i < 8; i++) {
+                    int idx = b3 * 8 + i;
+                    float Y = TQ3_0_CENTROIDS[q_vals[idx]] * rms * s2_vals[idx / 32];
+                    float wY = w[idx] * Y;
+                    sum_wXY += buf[idx] * wY;
+                    sum_wYY += Y * wY;
+                }
+                int best_idx = 0;
+                float best_s3_err = FLT_MAX;
+                for (int ci = 0; ci < 4; ci++) {
+                    float s3 = tq3_rvq_cb3[ci];
+                    float err = s3 * s3 * sum_wYY - 2.0f * s3 * sum_wXY;
+                    if (err < best_s3_err) {
+                        best_s3_err = err;
+                        best_idx = ci;
+                    }
+                }
+                s3_vals[b3] = tq3_rvq_cb3[best_idx];
+            }
+
+            // Step D: Wiener filter for optimal super-block scale d (simulating FP16 rounding error)
+            float num_d = 0.0f, den_d = 0.0f;
+            for (int i = 0; i < QK_TQ3_RVQ; i++) {
+                float c = TQ3_0_CENTROIDS[q_vals[i]] * s2_vals[i / 32] * s3_vals[i / 8];
+                float wc = w[i] * c;
+                num_d += buf[i] * wc;
+                den_d += c * wc;
+            }
+            if (den_d > 1e-10f) {
+                rms = num_d / den_d;
+                // Simulate FP16 rounding error in iterative loop
+                dst->d = GGML_FP32_TO_FP16(rms);
+                rms = GGML_FP16_TO_FP32(dst->d);
+            }
+        }
+
+        // 5. Final one-time bit-packing into dst
+        // Pack 3-bit base indices (dst->qs): 8 values per 3 bytes, LSB-first
+        memset(dst->qs, 0, sizeof(dst->qs));
+        for (int i = 0; i < QK_TQ3_RVQ; i++) {
+            int q = q_vals[i];
+            int byte_idx = (i * 3) / 8;
+            int bit_off = (i * 3) % 8;
+            dst->qs[byte_idx] |= (q & 0x7) << bit_off;
+            if (bit_off > 5) {
+                dst->qs[byte_idx + 1] |= (q & 0x7) >> (8 - bit_off);
+            }
+        }
+
+        // Pack 4-bit scales2 (dst->scales2): 2 blocks per byte, LSB-first
+        memset(dst->scales2, 0, sizeof(dst->scales2));
+        for (int b2 = 0; b2 < 8; b2++) {
+            int best_idx = 0;
+            for (int ci = 0; ci < 16; ci++) {
+                if (tq3_rvq_cb2[ci] == s2_vals[b2]) {
+                    best_idx = ci;
+                    break;
+                }
+            }
+            int byte_idx = b2 >> 1;
+            int nibble_off = (b2 & 1) * 4;
+            dst->scales2[byte_idx] |= (best_idx & 0xF) << nibble_off;
+        }
+
+        // Pack 2-bit scales3 (dst->scales3): 4 sub-blocks per byte, LSB-first
+        memset(dst->scales3, 0, sizeof(dst->scales3));
+        for (int b3 = 0; b3 < 32; b3++) {
+            int best_idx = 0;
+            for (int ci = 0; ci < 4; ci++) {
+                if (tq3_rvq_cb3[ci] == s3_vals[b3]) {
+                    best_idx = ci;
+                    break;
+                }
+            }
+            int byte_idx = b3 >> 2;
+            int bit_off = (b3 & 3) * 2;
+            dst->scales3[byte_idx] |= (best_idx & 0x3) << bit_off;
+        }
+
+        // Save final rms
+        dst->d = GGML_FP32_TO_FP16(rms);
+    }
+}
+
+void quantize_row_tq3_rvq_ref(const float * GGML_RESTRICT x, block_tq3_rvq * GGML_RESTRICT y, int64_t k) {
+    quantize_row_tq3_rvq_impl(x, y, k, NULL);
+}
+
+void dequantize_row_tq3_rvq(const block_tq3_rvq * GGML_RESTRICT x, float * GGML_RESTRICT y, int64_t k) {
+    assert(k % QK_TQ3_RVQ == 0);
+    const int nb = k / QK_TQ3_RVQ;
+    for (int blk = 0; blk < nb; blk++) {
+        const block_tq3_rvq * blk_ptr = &x[blk];
+        const float d = GGML_FP16_TO_FP32(blk_ptr->d);
+
+        // Dequantize all 256 elements into a local buffer
+        float buf[QK_TQ3_RVQ];
+        for (int i = 0; i < QK_TQ3_RVQ; i++) {
+            // Unpack 3-bit, LSB-first
+            int byte_idx = (i * 3) / 8;
+            int bit_off = (i * 3) % 8;
+            int q = (blk_ptr->qs[byte_idx] >> bit_off) & 0x7;
+            if (bit_off > 5) {
+                q |= (blk_ptr->qs[byte_idx + 1] << (8 - bit_off)) & 0x7;
+            }
+            // RVQ stage 2: 4-bit per 32-element block
+            int block2 = i / 32;
+            int byte2 = block2 >> 1;
+            int nib_off = (block2 & 1) * 4;
+            int idx2 = (blk_ptr->scales2[byte2] >> nib_off) & 0xF;
+            float s2 = tq3_rvq_cb2[idx2];
+            // RVQ stage 3: 2-bit per 8-element sub-block
+            int block3 = i / 8;
+            int byte3 = block3 >> 2;
+            int bit_off3 = (block3 & 3) * 2;
+            int idx3 = (blk_ptr->scales3[byte3] >> bit_off3) & 0x3;
+            float s3 = tq3_rvq_cb3[idx3];
+            // Decode in rotated domain: w_rot = centroid[q] * d * s2 * s3
+            buf[i] = TQ3_0_CENTROIDS[q] * d * s2 * s3;
+        }
+
+        // Inverse RHT per 32-element sub-block (same pattern as TQ3_1S/TQ4_1S)
+        for (int g = 0; g < 8; g++) {
+            tq3_0_rht_inverse(buf + g * 32);
+        }
+
+        memcpy(y + blk * QK_TQ3_RVQ, buf, QK_TQ3_RVQ * sizeof(float));
+    }
+}
+
+size_t quantize_tq3_rvq(const float * GGML_RESTRICT src, void * GGML_RESTRICT dst,
+                         int64_t nrows, int64_t n_per_row, const float * imatrix) {
+    assert(n_per_row % QK_TQ3_RVQ == 0);
+    size_t row_size = (n_per_row / QK_TQ3_RVQ) * sizeof(block_tq3_rvq);
+    for (int64_t row = 0; row < nrows; row++) {
+        quantize_row_tq3_rvq_impl(
+            src + row * n_per_row,
+            (block_tq3_rvq *)((char *)dst + row * row_size),
+            n_per_row,
+            imatrix
         );
     }
     return nrows * row_size;
