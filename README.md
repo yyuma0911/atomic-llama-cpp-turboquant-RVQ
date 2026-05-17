@@ -20,9 +20,9 @@ Full paper forthcoming.
 
 ## License
 
-Apache-2.0
+MIT
 
 This fork is built on:
-- [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) (Apache-2.0)
-- [TheTom/llama-cpp-turboquant](https://github.com/TheTom/llama-cpp-turboquant) (Apache-2.0)
-- [AtomicBot-ai/atomic-llama-cpp-turboquant](https://github.com/AtomicBot-ai/atomic-llama-cpp-turboquant) (Apache-2.0)
+- [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) (MIT)
+- [TheTom/llama-cpp-turboquant](https://github.com/TheTom/llama-cpp-turboquant) (MIT)
+- [AtomicBot-ai/atomic-llama-cpp-turboquant](https://github.com/AtomicBot-ai/atomic-llama-cpp-turboquant) (MIT)
