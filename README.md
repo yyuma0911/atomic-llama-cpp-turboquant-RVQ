@@ -1,3 +1,11 @@
+> **Fork note** — This repository adds `TQ3_RVQ`, a 3.44 bpw residual vector quantization format
+> on top of [AtomicBot-ai/atomic-llama-cpp-turboquant](https://github.com/AtomicBot-ai/atomic-llama-cpp-turboquant).
+> Development branch: `feature/tq3-rvq` | Hardware: AMD RX 6900 XT · ROCm 7.2.1 · gfx1030
+>
+> **Status:** Early research upload. Full documentation coming with paper.
+
+---
+
 # Atomic llama.cpp
 
 ![atomic llama](https://github.com/AtomicBot-ai/.github/raw/main/assets/atomic%20llama.png)
