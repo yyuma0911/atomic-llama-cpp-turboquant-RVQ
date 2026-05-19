@@ -18,6 +18,7 @@
 #include "ggml.h"
 #include "ggml-cpp.h"
 #include "ggml-backend.h"
+#include "../ggml/src/ggml-quants.h"
 
 #include <algorithm>
 #include <cassert>
@@ -677,6 +678,32 @@ llama_model::~llama_model() {
 void llama_model::load_stats(llama_model_loader & ml) {
     pimpl->n_elements = ml.n_elements;
     pimpl->n_bytes = ml.n_bytes;
+
+    // Restore TQ3_RVQ adaptive codebook from GGUF metadata (if present).
+    // Cost to store: 80 bytes of KV metadata — zero impact on bpw.
+    // Backward-compatible: missing keys are silently ignored (uses default codebook).
+    const gguf_context * meta = ml.metadata;
+    int64_t key_k = gguf_find_key(meta, "turbo_quant.tq3_rvq.k");
+    if (key_k >= 0) {
+        float k = gguf_get_val_f32(meta, key_k);
+        const char * env_k = std::getenv("TQ3_RVQ_K");
+        if (env_k) {
+            k = std::strtof(env_k, nullptr);
+            LLAMA_LOG_INFO("%s: overriding TQ3_RVQ shape parameter k with env TQ3_RVQ_K = %.3f\n", __func__, k);
+        }
+        tq3_rvq_init_from_k(k);
+        LLAMA_LOG_INFO("%s: loaded TQ3_RVQ shape parameter k = %.3f and initialized k-sparsity centroids\n", __func__, k);
+    }
+    int64_t key_cb2 = gguf_find_key(meta, "turbo_quant.tq3_rvq.codebook2");
+    int64_t key_cb3 = gguf_find_key(meta, "turbo_quant.tq3_rvq.codebook3");
+    if (key_cb2 >= 0 && key_cb3 >= 0 &&
+        gguf_get_arr_n(meta, key_cb2) == 16 &&
+        gguf_get_arr_n(meta, key_cb3) == 4) {
+        const float * cb2 = (const float *) gguf_get_arr_data(meta, key_cb2);
+        const float * cb3 = (const float *) gguf_get_arr_data(meta, key_cb3);
+        tq3_rvq_set_codebook(cb2, cb3);
+        LLAMA_LOG_INFO("%s: loaded TQ3_RVQ adaptive codebook from GGUF metadata\n", __func__);
+    }
 }
 
 void llama_model::load_arch(llama_model_loader & ml) {

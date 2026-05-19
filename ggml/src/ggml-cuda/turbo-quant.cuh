@@ -438,12 +438,12 @@ static __device__ __forceinline__ float turbo2_dequant_element(
 // Stage 3: 4-level 2-bit scale per 8-element sub-block, range ~[0.88, 1.12]
 // When tq3_rvq_set_codebook() is called with trained values, must be synced
 // to GPU constant memory via cudaMemcpyToSymbol before inference.
-__constant__ float TQ3_RVQ_CB2[16] = {
+static __constant__ float TQ3_RVQ_CB2[16] = {
     0.70f, 0.78f, 0.85f, 0.90f, 0.94f, 0.97f, 0.99f, 1.00f,
     1.02f, 1.04f, 1.07f, 1.11f, 1.16f, 1.23f, 1.31f, 1.40f
 };
 
-__constant__ float TQ3_RVQ_CB3[4] = {
+static __constant__ float TQ3_RVQ_CB3[4] = {
     0.88f, 0.95f, 1.05f, 1.12f
 };
 

@@ -1032,16 +1032,34 @@ size_t quantize_tq4_1s(const float * GGML_RESTRICT src, void * GGML_RESTRICT dst
 
 // Default codebooks for TQ3_RVQ
 // Stage 2 (16-level): multiplicative scale correction for 32-element blocks
-// Values are centered around 1.0 with denser sampling near 1.0, range ~[0.70, 1.40]
+// Pre-optimized universal default for LLM linear layers
 static const float TQ3_RVQ_CB2_DEFAULT[16] = {
     0.70f, 0.78f, 0.85f, 0.90f, 0.94f, 0.97f, 0.99f, 1.00f,
     1.02f, 1.04f, 1.07f, 1.11f, 1.16f, 1.23f, 1.31f, 1.40f
 };
 
-// Stage 3 (4-level): fine-grained multiplicative scale for 8-element sub-blocks, range ~[0.88, 1.12]
+// Stage 3 (4-level): fine-grained multiplicative scale for 8-element sub-blocks
 static const float TQ3_RVQ_CB3_DEFAULT[4] = {
     0.88f, 0.95f, 1.05f, 1.12f
 };
+
+// Base 3-bit centroids (initialized with Lloyd-Max N(0,1) defaults)
+static float tq3_rvq_centroids[8] = {
+    -1.996684f, -1.291398f, -0.740341f, -0.247508f,
+     0.230106f,  0.725222f,  1.277503f,  1.988943f
+};
+static float tq3_rvq_k = 1.07f; // Default shape parameter k (Lloyd-Max N(0,1) optimal)
+
+// Weak link to CUDA codebook sync function (defined in mmvq-tq.cu and convert.cu)
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((weak)) void ggml_cuda_tq3_rvq_sync_codebook_mmvq(const float * centroids, const float * cb2, const float * cb3);
+__attribute__((weak)) void ggml_cuda_tq3_rvq_sync_codebook_convert(const float * centroids, const float * cb2, const float * cb3);
+__attribute__((weak)) void ggml_cuda_tq3_rvq_sync_codebook_getrows(const float * centroids, const float * cb2, const float * cb3);
+#else
+static void (*ggml_cuda_tq3_rvq_sync_codebook_mmvq)(const float * centroids, const float * cb2, const float * cb3) = NULL;
+static void (*ggml_cuda_tq3_rvq_sync_codebook_convert)(const float * centroids, const float * cb2, const float * cb3) = NULL;
+static void (*ggml_cuda_tq3_rvq_sync_codebook_getrows)(const float * centroids, const float * cb2, const float * cb3) = NULL;
+#endif
 
 // Global codebooks for RVQ stages (initialized with static defaults at compile time)
 // Use tq3_rvq_set_codebook() to override with model-specific values at runtime
@@ -1053,14 +1071,116 @@ static float tq3_rvq_cb3[4] = {
     0.88f, 0.95f, 1.05f, 1.12f
 };
 static bool  tq3_rvq_cb_initialized = true;
+static bool  tq3_rvq_global_fitted = false;
 
 void tq3_rvq_set_codebook(const float * cb2, const float * cb3) {
     memcpy(tq3_rvq_cb2, cb2, sizeof(tq3_rvq_cb2));
     memcpy(tq3_rvq_cb3, cb3, sizeof(tq3_rvq_cb3));
     tq3_rvq_cb_initialized = true;
+
+    if (ggml_cuda_tq3_rvq_sync_codebook_mmvq) {
+        ggml_cuda_tq3_rvq_sync_codebook_mmvq(tq3_rvq_centroids, tq3_rvq_cb2, tq3_rvq_cb3);
+    }
+    if (ggml_cuda_tq3_rvq_sync_codebook_convert) {
+        ggml_cuda_tq3_rvq_sync_codebook_convert(tq3_rvq_centroids, tq3_rvq_cb2, tq3_rvq_cb3);
+    }
+    if (ggml_cuda_tq3_rvq_sync_codebook_getrows) {
+        ggml_cuda_tq3_rvq_sync_codebook_getrows(tq3_rvq_centroids, tq3_rvq_cb2, tq3_rvq_cb3);
+    }
 }
 
-static void quantize_row_tq3_rvq_impl(const float * GGML_RESTRICT x, block_tq3_rvq * GGML_RESTRICT y, int64_t k, const float * imatrix) {
+void tq3_rvq_get_codebook(float * cb2_out, float * cb3_out) {
+    memcpy(cb2_out, tq3_rvq_cb2, sizeof(tq3_rvq_cb2));
+    memcpy(cb3_out, tq3_rvq_cb3, sizeof(tq3_rvq_cb3));
+}
+
+// Forward declaration for K-means helper (defined below)
+void tq3_rvq_kmeans(const float * samples, int n_samples, float * centroids, int k, int n_iter);
+
+void tq3_rvq_set_centroids(const float * centroids) {
+    memcpy(tq3_rvq_centroids, centroids, sizeof(tq3_rvq_centroids));
+
+    if (ggml_cuda_tq3_rvq_sync_codebook_mmvq) {
+        ggml_cuda_tq3_rvq_sync_codebook_mmvq(tq3_rvq_centroids, tq3_rvq_cb2, tq3_rvq_cb3);
+    }
+    if (ggml_cuda_tq3_rvq_sync_codebook_convert) {
+        ggml_cuda_tq3_rvq_sync_codebook_convert(tq3_rvq_centroids, tq3_rvq_cb2, tq3_rvq_cb3);
+    }
+    if (ggml_cuda_tq3_rvq_sync_codebook_getrows) {
+        ggml_cuda_tq3_rvq_sync_codebook_getrows(tq3_rvq_centroids, tq3_rvq_cb2, tq3_rvq_cb3);
+    }
+}
+
+void tq3_rvq_get_centroids(float * centroids_out) {
+    memcpy(centroids_out, tq3_rvq_centroids, sizeof(tq3_rvq_centroids));
+}
+
+void tq3_rvq_fit_centroids(const float * samples, int n_samples) {
+    if (n_samples <= 0) {
+        fprintf(stderr, "[TQ3_RVQ] Warning: tq3_rvq_fit_centroids called with %d samples, skipping\n", n_samples);
+        return;
+    }
+    float new_centroids[8];
+    tq3_rvq_kmeans(samples, n_samples, new_centroids, 8, 20);
+    tq3_rvq_set_centroids(new_centroids);
+
+    fprintf(stderr, "[TQ3_RVQ] Fitted data-driven centroids via K-means:\n  ");
+    for (int i = 0; i < 8; i++) {
+        fprintf(stderr, "%.4f ", new_centroids[i]);
+    }
+    fprintf(stderr, "\n");
+}
+
+
+static int tq3_rvq_choose_index(float val) {
+    float m0 = (tq3_rvq_centroids[0] + tq3_rvq_centroids[1]) * 0.5f;
+    float m1 = (tq3_rvq_centroids[1] + tq3_rvq_centroids[2]) * 0.5f;
+    float m2 = (tq3_rvq_centroids[2] + tq3_rvq_centroids[3]) * 0.5f;
+    float m3 = (tq3_rvq_centroids[3] + tq3_rvq_centroids[4]) * 0.5f;
+    float m4 = (tq3_rvq_centroids[4] + tq3_rvq_centroids[5]) * 0.5f;
+    float m5 = (tq3_rvq_centroids[5] + tq3_rvq_centroids[6]) * 0.5f;
+    float m6 = (tq3_rvq_centroids[6] + tq3_rvq_centroids[7]) * 0.5f;
+
+    if (val < m0) return 0;
+    if (val < m1) return 1;
+    if (val < m2) return 2;
+    if (val < m3) return 3;
+    if (val < m4) return 4;
+    if (val < m5) return 5;
+    if (val < m6) return 6;
+    return 7;
+}
+
+void tq3_rvq_init_from_k(float k) {
+    tq3_rvq_k = k;
+    for (int i = 0; i < 8; i++) {
+        // Equal-spaced index t_i in [-1.0, 1.0]
+        float t = -1.0f + i * (2.0f / 7.0f);
+        float sign = (t >= 0.0f) ? 1.0f : -1.0f;
+        // Scale factor: Lloyd-Max maximum centroid magnitude (1.996684f)
+        tq3_rvq_centroids[i] = sign * powf(fabsf(t), k) * 1.996684f;
+    }
+
+    fprintf(stderr, "[TQ3_RVQ] Generated k-sparsity centroids with k = %.3f:\n", k);
+    fprintf(stderr, "  ");
+    for (int i = 0; i < 8; i++) {
+        fprintf(stderr, "%.4f ", tq3_rvq_centroids[i]);
+    }
+    fprintf(stderr, "\n");
+
+    if (ggml_cuda_tq3_rvq_sync_codebook_mmvq) {
+        ggml_cuda_tq3_rvq_sync_codebook_mmvq(tq3_rvq_centroids, tq3_rvq_cb2, tq3_rvq_cb3);
+    }
+    if (ggml_cuda_tq3_rvq_sync_codebook_convert) {
+        ggml_cuda_tq3_rvq_sync_codebook_convert(tq3_rvq_centroids, tq3_rvq_cb2, tq3_rvq_cb3);
+    }
+    if (ggml_cuda_tq3_rvq_sync_codebook_getrows) {
+        ggml_cuda_tq3_rvq_sync_codebook_getrows(tq3_rvq_centroids, tq3_rvq_cb2, tq3_rvq_cb3);
+    }
+}
+
+static void quantize_row_tq3_rvq_impl(const float * GGML_RESTRICT x, block_tq3_rvq * GGML_RESTRICT y, int64_t k, const float * imatrix,
+                                       const float * cb2, const float * cb3) {
     assert(k % QK_TQ3_RVQ == 0);
     const int nb = k / QK_TQ3_RVQ;
     for (int blk = 0; blk < nb; blk++) {
@@ -1094,12 +1214,14 @@ static void quantize_row_tq3_rvq_impl(const float * GGML_RESTRICT x, block_tq3_r
             }
         }
 
-        // 2. Compute super-block scale (RMS norm) on rotated data
-        float sum = 0.0f;
+        // 2. Compute super-block scale (MAE-based robust initialization)
+        float sum_abs = 0.0f;
         for (int i = 0; i < QK_TQ3_RVQ; i++) {
-            sum += buf[i] * buf[i];
+            sum_abs += fabsf(buf[i]);
         }
-        float rms = sqrtf(sum / QK_TQ3_RVQ);
+        float mae = sum_abs / QK_TQ3_RVQ;
+        // Convert robust MAE to estimated standard deviation (RMS) for normal distribution
+        float rms = mae * 1.253314f;
 
         // Smart initialization of s2_vals and s3_vals using local RMS ratios
         float s2_vals[8];
@@ -1114,13 +1236,13 @@ static void quantize_row_tq3_rvq_impl(const float * GGML_RESTRICT x, block_tq3_r
             int best_idx = 0;
             float best_diff = FLT_MAX;
             for (int ci = 0; ci < 16; ci++) {
-                float diff = fabsf(tq3_rvq_cb2[ci] - ratio);
+                float diff = fabsf(cb2[ci] - ratio);
                 if (diff < best_diff) {
                     best_diff = diff;
                     best_idx = ci;
                 }
             }
-            s2_vals[b2] = tq3_rvq_cb2[best_idx];
+            s2_vals[b2] = cb2[best_idx];
         }
         for (int b3 = 0; b3 < 32; b3++) {
             int b2 = b3 / 4;
@@ -1134,13 +1256,13 @@ static void quantize_row_tq3_rvq_impl(const float * GGML_RESTRICT x, block_tq3_r
             int best_idx = 0;
             float best_diff = FLT_MAX;
             for (int ci = 0; ci < 4; ci++) {
-                float diff = fabsf(tq3_rvq_cb3[ci] - ratio);
+                float diff = fabsf(cb3[ci] - ratio);
                 if (diff < best_diff) {
                     best_diff = diff;
                     best_idx = ci;
                 }
             }
-            s3_vals[b3] = tq3_rvq_cb3[best_idx];
+            s3_vals[b3] = cb3[best_idx];
         }
 
         // 3. Grid search on initial scale (RMS) with imatrix support (9 points)
@@ -1153,8 +1275,8 @@ static void quantize_row_tq3_rvq_impl(const float * GGML_RESTRICT x, block_tq3_r
             for (int i = 0; i < QK_TQ3_RVQ; i++) {
                 float scale = test_rms * s2_vals[i / 32] * s3_vals[i / 8];
                 float val = (scale > 1e-10f) ? (buf[i] / scale) : 0.0f;
-                int q = tq3_0_choose_index(val);
-                float restored = TQ3_0_CENTROIDS[q] * scale;
+                int q = tq3_rvq_choose_index(val);
+                float restored = tq3_rvq_centroids[q] * scale;
                 float diff = buf[i] - restored;
                 err += w[i] * diff * diff;
             }
@@ -1175,7 +1297,7 @@ static void quantize_row_tq3_rvq_impl(const float * GGML_RESTRICT x, block_tq3_r
             for (int i = 0; i < QK_TQ3_RVQ; i++) {
                 float scale = rms * s2_vals[i / 32] * s3_vals[i / 8];
                 float val = (scale > 1e-10f) ? (buf[i] / scale) : 0.0f;
-                q_vals[i] = tq3_0_choose_index(val);
+                q_vals[i] = tq3_rvq_choose_index(val);
             }
 
             // Step B: Optimize s2_vals (RVQ Stage 2, 4-bit per 32-element block)
@@ -1185,7 +1307,7 @@ static void quantize_row_tq3_rvq_impl(const float * GGML_RESTRICT x, block_tq3_r
                 float sum_wYY = 0.0f;
                 for (int i = 0; i < 32; i++) {
                     int idx = b2 * 32 + i;
-                    float Y = TQ3_0_CENTROIDS[q_vals[idx]] * rms * s3_vals[idx / 8];
+                    float Y = tq3_rvq_centroids[q_vals[idx]] * rms * s3_vals[idx / 8];
                     float wY = w[idx] * Y;
                     sum_wXY += buf[idx] * wY;
                     sum_wYY += Y * wY;
@@ -1193,14 +1315,14 @@ static void quantize_row_tq3_rvq_impl(const float * GGML_RESTRICT x, block_tq3_r
                 int best_idx = 0;
                 float best_s2_err = FLT_MAX;
                 for (int ci = 0; ci < 16; ci++) {
-                    float s2 = tq3_rvq_cb2[ci];
+                    float s2 = cb2[ci];
                     float err = s2 * s2 * sum_wYY - 2.0f * s2 * sum_wXY;
                     if (err < best_s2_err) {
                         best_s2_err = err;
                         best_idx = ci;
                     }
                 }
-                s2_vals[b2] = tq3_rvq_cb2[best_idx];
+                s2_vals[b2] = cb2[best_idx];
             }
 
             // Step C: Optimize s3_vals (RVQ Stage 3, 2-bit per 8-element sub-block)
@@ -1210,7 +1332,7 @@ static void quantize_row_tq3_rvq_impl(const float * GGML_RESTRICT x, block_tq3_r
                 float sum_wYY = 0.0f;
                 for (int i = 0; i < 8; i++) {
                     int idx = b3 * 8 + i;
-                    float Y = TQ3_0_CENTROIDS[q_vals[idx]] * rms * s2_vals[idx / 32];
+                    float Y = tq3_rvq_centroids[q_vals[idx]] * rms * s2_vals[idx / 32];
                     float wY = w[idx] * Y;
                     sum_wXY += buf[idx] * wY;
                     sum_wYY += Y * wY;
@@ -1218,20 +1340,20 @@ static void quantize_row_tq3_rvq_impl(const float * GGML_RESTRICT x, block_tq3_r
                 int best_idx = 0;
                 float best_s3_err = FLT_MAX;
                 for (int ci = 0; ci < 4; ci++) {
-                    float s3 = tq3_rvq_cb3[ci];
+                    float s3 = cb3[ci];
                     float err = s3 * s3 * sum_wYY - 2.0f * s3 * sum_wXY;
                     if (err < best_s3_err) {
                         best_s3_err = err;
                         best_idx = ci;
                     }
                 }
-                s3_vals[b3] = tq3_rvq_cb3[best_idx];
+                s3_vals[b3] = cb3[best_idx];
             }
 
             // Step D: Wiener filter for optimal super-block scale d (simulating FP16 rounding error)
             float num_d = 0.0f, den_d = 0.0f;
             for (int i = 0; i < QK_TQ3_RVQ; i++) {
-                float c = TQ3_0_CENTROIDS[q_vals[i]] * s2_vals[i / 32] * s3_vals[i / 8];
+                float c = tq3_rvq_centroids[q_vals[i]] * s2_vals[i / 32] * s3_vals[i / 8];
                 float wc = w[i] * c;
                 num_d += buf[i] * wc;
                 den_d += c * wc;
@@ -1262,7 +1384,7 @@ static void quantize_row_tq3_rvq_impl(const float * GGML_RESTRICT x, block_tq3_r
         for (int b2 = 0; b2 < 8; b2++) {
             int best_idx = 0;
             for (int ci = 0; ci < 16; ci++) {
-                if (tq3_rvq_cb2[ci] == s2_vals[b2]) {
+                if (cb2[ci] == s2_vals[b2]) {
                     best_idx = ci;
                     break;
                 }
@@ -1277,7 +1399,7 @@ static void quantize_row_tq3_rvq_impl(const float * GGML_RESTRICT x, block_tq3_r
         for (int b3 = 0; b3 < 32; b3++) {
             int best_idx = 0;
             for (int ci = 0; ci < 4; ci++) {
-                if (tq3_rvq_cb3[ci] == s3_vals[b3]) {
+                if (cb3[ci] == s3_vals[b3]) {
                     best_idx = ci;
                     break;
                 }
@@ -1293,7 +1415,7 @@ static void quantize_row_tq3_rvq_impl(const float * GGML_RESTRICT x, block_tq3_r
 }
 
 void quantize_row_tq3_rvq_ref(const float * GGML_RESTRICT x, block_tq3_rvq * GGML_RESTRICT y, int64_t k) {
-    quantize_row_tq3_rvq_impl(x, y, k, NULL);
+    quantize_row_tq3_rvq_impl(x, y, k, NULL, tq3_rvq_cb2, tq3_rvq_cb3);
 }
 
 void dequantize_row_tq3_rvq(const block_tq3_rvq * GGML_RESTRICT x, float * GGML_RESTRICT y, int64_t k) {
@@ -1326,7 +1448,7 @@ void dequantize_row_tq3_rvq(const block_tq3_rvq * GGML_RESTRICT x, float * GGML_
             int idx3 = (blk_ptr->scales3[byte3] >> bit_off3) & 0x3;
             float s3 = tq3_rvq_cb3[idx3];
             // Decode in rotated domain: w_rot = centroid[q] * d * s2 * s3
-            buf[i] = TQ3_0_CENTROIDS[q] * d * s2 * s3;
+            buf[i] = tq3_rvq_centroids[q] * d * s2 * s3;
         }
 
         // Inverse RHT per 32-element sub-block (same pattern as TQ3_1S/TQ4_1S)
@@ -1338,16 +1460,183 @@ void dequantize_row_tq3_rvq(const block_tq3_rvq * GGML_RESTRICT x, float * GGML_
     }
 }
 
+/* ---------- K-means helper for RVQ codebook learning ---------- */
+
+static int tq3_rvq_compare_float(const void * a, const void * b) {
+    float fa = *(const float *)a;
+    float fb = *(const float *)b;
+    return (fa > fb) - (fa < fb);
+}
+
+// Fits k centroids to the given samples using Lloyd's algorithm.
+// Centroids are initialised by evenly-spaced percentile picks then refined.
+void tq3_rvq_kmeans(const float * samples, int n_samples, float * centroids, int k, int n_iter) {
+    if (n_samples <= 0 || k <= 0) return;
+
+    // Sort a copy to initialise centroids at evenly-spaced percentiles
+    float * sorted = (float *)malloc(n_samples * sizeof(float));
+    if (!sorted) {
+        // Fallback: evenly-spaced init from min/max of samples
+        float fmin = samples[0], fmax = samples[0];
+        for (int i = 1; i < n_samples; i++) {
+            if (samples[i] < fmin) fmin = samples[i];
+            if (samples[i] > fmax) fmax = samples[i];
+        }
+        for (int ci = 0; ci < k; ci++) {
+            centroids[ci] = fmin + (fmax - fmin) * (float)ci / (float)(k - 1);
+        }
+        goto do_lloyd;
+    }
+    memcpy(sorted, samples, n_samples * sizeof(float));
+
+    // O(n log n) sort via C stdlib
+    qsort(sorted, n_samples, sizeof(float), tq3_rvq_compare_float);
+
+    for (int ci = 0; ci < k; ci++) {
+        int idx = (int)((float)ci / (float)(k - 1) * (float)(n_samples - 1) + 0.5f);
+        if (idx >= n_samples) idx = n_samples - 1;
+        centroids[ci] = sorted[idx];
+    }
+    free(sorted);
+
+do_lloyd:
+    ; // null statement (label must precede a statement, not a declaration)
+    // Lloyd iterations
+    float sums[16]  = {0};  // k <= 16 always
+    int   counts[16] = {0};
+    for (int iter = 0; iter < n_iter; iter++) {
+        memset(sums,   0, k * sizeof(float));
+        memset(counts, 0, k * sizeof(int));
+
+        for (int i = 0; i < n_samples; i++) {
+            float best_dist = FLT_MAX;
+            int   best_ci   = 0;
+            for (int ci = 0; ci < k; ci++) {
+                float d = fabsf(samples[i] - centroids[ci]);
+                if (d < best_dist) { best_dist = d; best_ci = ci; }
+            }
+            sums[best_ci]   += samples[i];
+            counts[best_ci] += 1;
+        }
+
+        for (int ci = 0; ci < k; ci++) {
+            if (counts[ci] > 0) centroids[ci] = sums[ci] / (float)counts[ci];
+        }
+    }
+
+    // Sort centroids ascending so codebook lookups are cache-friendly
+    for (int i = 1; i < k; i++) {
+        float key = centroids[i];
+        int j = i - 1;
+        while (j >= 0 && centroids[j] > key) { centroids[j + 1] = centroids[j]; j--; }
+        centroids[j + 1] = key;
+    }
+}
+
 size_t quantize_tq3_rvq(const float * GGML_RESTRICT src, void * GGML_RESTRICT dst,
                          int64_t nrows, int64_t n_per_row, const float * imatrix) {
     assert(n_per_row % QK_TQ3_RVQ == 0);
     size_t row_size = (n_per_row / QK_TQ3_RVQ) * sizeof(block_tq3_rvq);
+
+    const int nb_per_row = (int)(n_per_row / QK_TQ3_RVQ);  // 256-element blocks per row
+    const int n_blocks    = (int)(nrows * nb_per_row);       // total blocks across all rows
+
+    // ---------------------------------------------------------------
+    // Pass 1: collect scale-ratio samples for K-means codebook fitting
+    // We only do this ONCE for the first representative linear layer (square, >= 1024)
+    // ---------------------------------------------------------------
+    if (!tq3_rvq_global_fitted && nrows == n_per_row && nrows >= 1024) {
+        // cb2: ratio of local_rms(32-elem sub-block) / global_rms(256-elem block), 8 per block
+        // cb3: ratio of local_rms(8-elem sub-block)  / (global_rms * s2_approx),   32 per block
+        int n_samples2 = n_blocks * 8;
+        int n_samples3 = n_blocks * 32;
+
+        float * ratios2 = (float *)malloc(n_samples2 * sizeof(float));
+        float * ratios3 = (float *)malloc(n_samples3 * sizeof(float));
+
+        if (ratios2 && ratios3) {
+            int sample2_idx = 0;
+            int sample3_idx = 0;
+
+            for (int64_t row = 0; row < nrows; row++) {
+                const float * row_src = src + row * n_per_row;
+
+                for (int blk = 0; blk < nb_per_row; blk++) {
+                    const float * blk_src = row_src + blk * QK_TQ3_RVQ;
+
+                    // WHT-rotate each 32-element sub-block (same as quantizer)
+                    float buf[QK_TQ3_RVQ];
+                    memcpy(buf, blk_src, QK_TQ3_RVQ * sizeof(float));
+                    for (int g = 0; g < 8; g++) tq3_0_rht_forward(buf + g * 32);
+
+                    // Global RMS of the 256-element rotated block
+                    float sum_sq = 0.0f;
+                    for (int i = 0; i < QK_TQ3_RVQ; i++) sum_sq += buf[i] * buf[i];
+                    float global_rms = sqrtf(sum_sq / QK_TQ3_RVQ);
+                    if (global_rms < 1e-10f) {
+                        for (int g = 0; g < 8; g++) ratios2[sample2_idx++] = 1.0f;
+                        for (int g = 0; g < 32; g++) ratios3[sample3_idx++] = 1.0f;
+                        continue;
+                    }
+
+                    // cb2 samples: local RMS of each 32-element sub-block / global_rms
+                    for (int g = 0; g < 8; g++) {
+                        float local_sq = 0.0f;
+                        for (int i = 0; i < 32; i++) local_sq += buf[g*32 + i] * buf[g*32 + i];
+                        float local_rms = sqrtf(local_sq / 32.0f);
+                        ratios2[sample2_idx++] = local_rms / global_rms;
+                    }
+
+                    // cb3 samples: local RMS of each 8-element sub-block / (global_rms * s2_approx)
+                    for (int g = 0; g < 8; g++) {
+                        float s2_sum = 0.0f;
+                        for (int i = 0; i < 32; i++) s2_sum += buf[g*32 + i] * buf[g*32 + i];
+                        float s2_approx = sqrtf(s2_sum / 32.0f) / global_rms;
+                        float denom = global_rms * s2_approx;
+                        if (denom < 1e-10f) denom = 1e-10f;
+
+                        for (int sb = 0; sb < 4; sb++) {
+                            float sub_sq = 0.0f;
+                            for (int i = 0; i < 8; i++) sub_sq += buf[g*32 + sb*8 + i] * buf[g*32 + sb*8 + i];
+                            float sub_rms = sqrtf(sub_sq / 8.0f);
+                            ratios3[sample3_idx++] = sub_rms / denom;
+                        }
+                    }
+                }
+            }
+
+            // Fit codebooks via K-means (20 iterations is plenty for 16/4 centroids)
+            float new_cb2[16], new_cb3[4];
+            tq3_rvq_kmeans(ratios2, n_samples2, new_cb2, 16, 20);
+            tq3_rvq_kmeans(ratios3, n_samples3, new_cb3,  4, 20);
+            tq3_rvq_set_codebook(new_cb2, new_cb3);
+            
+            tq3_rvq_global_fitted = true;
+
+            fprintf(stderr, "[TQ3_RVQ] global adaptive codebook fitted on tensor (%lld x %lld):\n",
+                    (long long)n_per_row, (long long)nrows);
+            fprintf(stderr, "  cb2: ");
+            for (int ci = 0; ci < 16; ci++) fprintf(stderr, "%.3f ", new_cb2[ci]);
+            fprintf(stderr, "\n  cb3: ");
+            for (int ci = 0; ci <  4; ci++) fprintf(stderr, "%.3f ", new_cb3[ci]);
+            fprintf(stderr, "\n");
+        }
+
+        free(ratios2);
+        free(ratios3);
+    }
+
+    // ---------------------------------------------------------------
+    // Pass 2: actual quantization with the model-adaptive codebook
+    // ---------------------------------------------------------------
     for (int64_t row = 0; row < nrows; row++) {
         quantize_row_tq3_rvq_impl(
             src + row * n_per_row,
             (block_tq3_rvq *)((char *)dst + row * row_size),
             n_per_row,
-            imatrix
+            imatrix,
+            tq3_rvq_cb2,
+            tq3_rvq_cb3
         );
     }
     return nrows * row_size;

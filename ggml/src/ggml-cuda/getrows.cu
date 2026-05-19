@@ -203,11 +203,42 @@ static void ggml_cuda_get_rows_switch_src0_type(
             get_rows_cuda_q<QK8_0, QR8_0, dequantize_q8_0>(src0_d, src1_d, dst_d,
                 ne00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb1, nb2, nb3, stream);
             break;
+        case GGML_TYPE_TQ3_RVQ:
+            get_rows_cuda_q<QK_TQ3_RVQ, QR_TQ3_RVQ, dequantize_tq3_rvq>(src0_d, src1_d, dst_d,
+                ne00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb1, nb2, nb3, stream);
+            break;
         default:
             // TODO: k-quants
             GGML_ABORT("%s: unsupported src0 type: %s\n", __func__, ggml_type_name(src0_type));
             break;
     }
+}
+
+#include "../ggml-quants.h"
+
+static __host__ void getrows_sync_tq3_rvq_codebook() {
+    static float last_cb2_0 = 0.0f;
+    float cb2[16], cb3[4];
+    tq3_rvq_get_codebook(cb2, cb3);
+    if (cb2[0] == 0.0f) return;
+    if (cb2[0] == last_cb2_0) return;
+    last_cb2_0 = cb2[0];
+    
+    float centroids[8];
+    tq3_rvq_get_centroids(centroids);
+    
+    CUDA_CHECK(cudaMemcpyToSymbol(TQ3_CENTROIDS_WEIGHT, centroids, 8 * sizeof(float)));
+    CUDA_CHECK(cudaMemcpyToSymbol(TQ3_RVQ_CB2, cb2, 16 * sizeof(float)));
+    CUDA_CHECK(cudaMemcpyToSymbol(TQ3_RVQ_CB3, cb3, 4 * sizeof(float)));
+}
+
+extern "C" {
+void ggml_cuda_tq3_rvq_sync_codebook_getrows(const float * centroids, const float * cb2, const float * cb3) {
+    // Keep as a fallback but actual sync happens just-in-time
+    CUDA_CHECK(cudaMemcpyToSymbol(TQ3_CENTROIDS_WEIGHT, centroids, 8 * sizeof(float)));
+    CUDA_CHECK(cudaMemcpyToSymbol(TQ3_RVQ_CB2, cb2, 16 * sizeof(float)));
+    CUDA_CHECK(cudaMemcpyToSymbol(TQ3_RVQ_CB3, cb3, 4 * sizeof(float)));
+}
 }
 
 void get_rows_cuda(
@@ -216,6 +247,9 @@ void get_rows_cuda(
         int64_t ne10, int64_t ne11, int64_t ne12, size_t nb10, size_t nb11, size_t nb12,
         size_t nb1, size_t nb2, size_t nb3,
         cudaStream_t stream) {
+    if (src0_type == GGML_TYPE_TQ3_RVQ) {
+        getrows_sync_tq3_rvq_codebook();
+    }
     switch (dst_type) {
         case GGML_TYPE_F32:
             ggml_cuda_get_rows_switch_src0_type(src0_d, src0_type, src1_d, (float *) dst_d,

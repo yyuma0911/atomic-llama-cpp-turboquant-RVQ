@@ -949,6 +949,24 @@ to_bf16_nc_cuda_t ggml_get_to_bf16_nc_cuda(ggml_type type) {
     }
 }
 
+#include "../ggml-quants.h"
+
+static __host__ void convert_sync_tq3_rvq_codebook() {
+    static float last_cb2_0 = 0.0f;
+    float cb2[16], cb3[4];
+    tq3_rvq_get_codebook(cb2, cb3);
+    if (cb2[0] == 0.0f) return;
+    if (cb2[0] == last_cb2_0) return;
+    last_cb2_0 = cb2[0];
+    
+    float centroids[8];
+    tq3_rvq_get_centroids(centroids);
+    
+    CUDA_CHECK(cudaMemcpyToSymbol(TQ3_CENTROIDS_WEIGHT, centroids, 8 * sizeof(float)));
+    CUDA_CHECK(cudaMemcpyToSymbol(TQ3_RVQ_CB2, cb2, 16 * sizeof(float)));
+    CUDA_CHECK(cudaMemcpyToSymbol(TQ3_RVQ_CB3, cb3, 4 * sizeof(float)));
+}
+
 to_fp32_nc_cuda_t ggml_get_to_fp32_nc_cuda(ggml_type type) {
     switch (type) {
         case GGML_TYPE_F16:
@@ -976,6 +994,7 @@ to_fp32_nc_cuda_t ggml_get_to_fp32_nc_cuda(ggml_type type) {
         case GGML_TYPE_TQ3_1S:
             return dequantize_block_cuda<QK_TQ3_0, QR_TQ3_1S, dequantize_tq3_1s>;
         case GGML_TYPE_TQ3_RVQ:
+            convert_sync_tq3_rvq_codebook();
             return dequantize_block_cuda<QK_TQ3_RVQ, QR_TQ3_RVQ, dequantize_tq3_rvq>;
         case GGML_TYPE_BF16:
             return convert_unary_cuda<nv_bfloat16, float>;
@@ -983,3 +1002,14 @@ to_fp32_nc_cuda_t ggml_get_to_fp32_nc_cuda(ggml_type type) {
             return nullptr;
     }
 }
+
+extern "C" {
+void ggml_cuda_tq3_rvq_sync_codebook_convert(const float * centroids, const float * cb2, const float * cb3) {
+    // Keep as a fallback but actual sync happens just-in-time
+    CUDA_CHECK(cudaMemcpyToSymbol(TQ3_CENTROIDS_WEIGHT, centroids, 8 * sizeof(float)));
+    CUDA_CHECK(cudaMemcpyToSymbol(TQ3_RVQ_CB2, cb2, 16 * sizeof(float)));
+    CUDA_CHECK(cudaMemcpyToSymbol(TQ3_RVQ_CB3, cb3, 4 * sizeof(float)));
+}
+}
+
+

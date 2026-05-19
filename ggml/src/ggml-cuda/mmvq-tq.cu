@@ -246,6 +246,8 @@ static void launch_tq3_rvq_multi(
         src0_d, act_buf, dst_d, ncols_x, nrows_x, stride_col_y, stride_col_dst);
 }
 
+static __host__ void mmvq_sync_tq3_rvq_codebook();
+
 void ggml_cuda_mul_mat_tq3_rvq(ggml_backend_cuda_context & ctx,
                                 const ggml_tensor * src0,
                                 const ggml_tensor * src1,
@@ -266,6 +268,7 @@ void ggml_cuda_mul_mat_tq3_rvq(ggml_backend_cuda_context & ctx,
     cudaStream_t stream = ctx.stream();
 
     const int id = ggml_cuda_get_device();
+    mmvq_sync_tq3_rvq_codebook();
     const int n_total_elements = ncols_x * ncols_dst;
 
     // Phase 1: Pre-rotate all tokens (reuse existing tq_prerotate_activation kernel)
@@ -732,3 +735,32 @@ void ggml_cuda_mul_mat_tq4_1s_cublas(ggml_backend_cuda_context & ctx,
                 CUBLAS_COMPUTE_32F,
                 CUBLAS_GEMM_DEFAULT_TENSOR_OP));
 }
+
+#include "../ggml-quants.h"
+
+static __host__ void mmvq_sync_tq3_rvq_codebook() {
+    static float last_cb2_0 = 0.0f;
+    float cb2[16], cb3[4];
+    tq3_rvq_get_codebook(cb2, cb3);
+    if (cb2[0] == 0.0f) return;
+    if (cb2[0] == last_cb2_0) return;
+    last_cb2_0 = cb2[0];
+    
+    float centroids[8];
+    tq3_rvq_get_centroids(centroids);
+    
+    CUDA_CHECK(cudaMemcpyToSymbol(TQ3_CENTROIDS_WEIGHT, centroids, 8 * sizeof(float)));
+    CUDA_CHECK(cudaMemcpyToSymbol(TQ3_RVQ_CB2, cb2, 16 * sizeof(float)));
+    CUDA_CHECK(cudaMemcpyToSymbol(TQ3_RVQ_CB3, cb3, 4 * sizeof(float)));
+}
+
+extern "C" {
+void ggml_cuda_tq3_rvq_sync_codebook_mmvq(const float * centroids, const float * cb2, const float * cb3) {
+    // Keep as a fallback but actual sync happens just-in-time
+    CUDA_CHECK(cudaMemcpyToSymbol(TQ3_CENTROIDS_WEIGHT, centroids, 8 * sizeof(float)));
+    CUDA_CHECK(cudaMemcpyToSymbol(TQ3_RVQ_CB2, cb2, 16 * sizeof(float)));
+    CUDA_CHECK(cudaMemcpyToSymbol(TQ3_RVQ_CB3, cb3, 4 * sizeof(float)));
+}
+}
+
+

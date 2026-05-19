@@ -18,3 +18,14 @@ void ggml_cuda_convert_tq4_1s_to_q8_0(const void * src_tq4, void * dst_q8, int64
 
 // TQ3_RVQ dedicated kernel (pre-rotate + multi-token mul_mat)
 void ggml_cuda_mul_mat_tq3_rvq(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst);
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+void ggml_cuda_tq3_rvq_sync_codebook_mmvq(const float * centroids, const float * cb2, const float * cb3);
+void ggml_cuda_tq3_rvq_sync_codebook_convert(const float * centroids, const float * cb2, const float * cb3);
+void ggml_cuda_tq3_rvq_sync_codebook_getrows(const float * centroids, const float * cb2, const float * cb3);
+#ifdef __cplusplus
+}
+#endif
+
