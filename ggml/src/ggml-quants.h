@@ -129,12 +129,9 @@ GGML_API void dequantize_row_tq3_rvq(const block_tq3_rvq * GGML_RESTRICT x, floa
 GGML_API size_t quantize_tq3_rvq(const float * GGML_RESTRICT src, void * GGML_RESTRICT dst, int64_t nrows, int64_t n_per_row, const float * imatrix);
 GGML_API void tq3_rvq_set_codebook(const float * cb2, const float * cb3);
 GGML_API void tq3_rvq_get_codebook(float * cb2_out, float * cb3_out);
-GGML_API void tq3_rvq_init_from_k(float k);
 GGML_API void tq3_rvq_set_centroids(const float * centroids);
 GGML_API void tq3_rvq_get_centroids(float * centroids_out);
-GGML_API void tq3_rvq_fit_centroids(const float * samples, int n_samples);
-
-
+GGML_API void tq3_rvq_set_all(const float * centroids, const float * cb2, const float * cb3);
 GGML_API void iq2xs_init_impl(enum ggml_type type);
 GGML_API void iq2xs_free_impl(enum ggml_type type);
 GGML_API void iq3xs_init_impl(int grid_size);

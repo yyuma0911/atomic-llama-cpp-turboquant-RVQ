@@ -439,12 +439,12 @@ static __device__ __forceinline__ float turbo2_dequant_element(
 // When tq3_rvq_set_codebook() is called with trained values, must be synced
 // to GPU constant memory via cudaMemcpyToSymbol before inference.
 static __constant__ float TQ3_RVQ_CB2[16] = {
-    0.70f, 0.78f, 0.85f, 0.90f, 0.94f, 0.97f, 0.99f, 1.00f,
-    1.02f, 1.04f, 1.07f, 1.11f, 1.16f, 1.23f, 1.31f, 1.40f
+    0.6906f, 0.8092f, 0.8644f, 0.9007f, 0.9279f, 0.9495f, 0.9676f, 0.9830f,
+    0.9970f, 1.0124f, 1.0305f, 1.0521f, 1.0793f, 1.1156f, 1.1708f, 1.2894f
 };
 
 static __constant__ float TQ3_RVQ_CB3[4] = {
-    0.88f, 0.95f, 1.05f, 1.12f
+    0.8216f, 0.9234f, 0.9766f, 1.0784f
 };
 
 // ---- Weight centroids: Lloyd-Max for N(0,1) ----

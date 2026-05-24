@@ -1,8 +1,9 @@
 #include "convert.cuh"
 #include "dequantize.cuh"
 #include "turbo-quant.cuh"
-
 #include <cstdint>
+
+static __host__ void convert_sync_tq3_rvq_codebook();
 
 #define CUDA_Q8_0_NE_ALIGN 2048
 
@@ -814,6 +815,7 @@ to_fp16_cuda_t ggml_get_to_fp16_cuda(ggml_type type) {
         case GGML_TYPE_TQ3_1S:
             return dequantize_block_cont_cuda<QK_TQ3_0, QR_TQ3_1S, dequantize_tq3_1s>;
         case GGML_TYPE_TQ3_RVQ:
+            convert_sync_tq3_rvq_codebook();
             return dequantize_block_cont_cuda<QK_TQ3_RVQ, QR_TQ3_RVQ, dequantize_tq3_rvq, half>;
         case GGML_TYPE_F32:
             return convert_unary_cont_cuda<float>;
@@ -881,6 +883,7 @@ to_fp32_cuda_t ggml_get_to_fp32_cuda(ggml_type type) {
         case GGML_TYPE_TQ3_1S:
             return dequantize_block_cont_cuda<QK_TQ3_0, QR_TQ3_1S, dequantize_tq3_1s>;
         case GGML_TYPE_TQ3_RVQ:
+            convert_sync_tq3_rvq_codebook();
             return dequantize_block_cont_cuda<QK_TQ3_RVQ, QR_TQ3_RVQ, dequantize_tq3_rvq, float>;
         case GGML_TYPE_F16:
             return convert_unary_cont_cuda<half>;
@@ -918,6 +921,7 @@ to_fp16_nc_cuda_t ggml_get_to_fp16_nc_cuda(ggml_type type) {
         case GGML_TYPE_TQ3_1S:
             return dequantize_block_cuda<QK_TQ3_0, QR_TQ3_1S, dequantize_tq3_1s>;
         case GGML_TYPE_TQ3_RVQ:
+            convert_sync_tq3_rvq_codebook();
             return dequantize_block_cuda<QK_TQ3_RVQ, QR_TQ3_RVQ, dequantize_tq3_rvq>;
         case GGML_TYPE_BF16:
             return convert_unary_cuda<nv_bfloat16>;

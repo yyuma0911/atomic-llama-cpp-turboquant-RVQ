@@ -894,31 +894,20 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
 
     quantize_state_impl qs(model, params);
 
-    // Lloyd-Max N(0,1) optimal shape parameter (k≈1.07).
-    // Dynamic scanning below overrides this based on actual model weight statistics.
-    float tq3_rvq_k = 1.07f;
-
-    // Dynamic analytical scanning: calculate optimal shape parameter k from weight statistics
+    // Collect RMS ratio samples from middle layers and fit TQ3_RVQ scale codebooks
+    // via quantile-based bin averaging below.
     if (default_type == GGML_TYPE_TQ3_RVQ) {
-        float sum_r = 0.0f;
-        int count_r = 0;
-
         // Collect RMS ratios for scale codebook fitting
         std::vector<float> r2_samples;
         std::vector<float> r3_samples;
-        std::vector<float> abs_samples;
 
         // Robust dynamic layer search:
-        // Scans outwards from the middle layer to dynamically find the first valid layer
-        // that contains BOTH an attention projection (q or qkv) and a feed-forward projection (up).
-        // This guarantees proper exploration even for hybrid SSM/Attention architectures like Qwen3.5-4B.
         int target_layer = -1;
         std::string attn_name_found = "";
         std::string ffn_name_found = "";
 
         int mid = model.hparams.n_layer / 2;
         for (int i = 0; i < (int)model.hparams.n_layer; i++) {
-            // Check outwards from middle: mid, mid+1, mid-1, mid+2...
             int l = mid;
             if (i > 0) {
                 l = (i % 2 == 1) ? (mid + (i + 1) / 2) : (mid - i / 2);
@@ -934,7 +923,6 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
 
             bool has_attn = false;
             std::string attn_name = "";
-            // Priority 1: qkv (Qwen), Priority 2: q (Llama)
             if (ml.weights_map.find(qkv_name) != ml.weights_map.end()) {
                 has_attn = true;
                 attn_name = qkv_name;
@@ -945,7 +933,6 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
 
             bool has_ffn = (ml.weights_map.find(up_name) != ml.weights_map.end());
 
-            // Select the first layer where both projections successfully exist
             if (has_attn && has_ffn) {
                 target_layer = l;
                 attn_name_found = attn_name;
@@ -957,8 +944,6 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
         std::vector<std::string> scan_names;
         if (target_layer >= 0) {
             scan_names = { attn_name_found, ffn_name_found };
-        } else {
-            LLAMA_LOG_WARN("%s: dynamic layer search failed to find valid attention+ffn pairs for statistical scanning\n", __func__);
         }
 
         for (const auto & name : scan_names) {
@@ -967,7 +952,6 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
                 const auto & weight = it->second;
                 ggml_tensor * tensor = weight.tensor;
 
-                // Load the tensor data temporarily from GGUF
                 std::vector<uint8_t> temp_buf;
                 if (!ml.use_mmap) {
                     temp_buf.resize(ggml_nbytes(tensor));
@@ -975,18 +959,14 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
                 }
                 ml.load_data_for(tensor);
 
-                // Compute MAE/RMS ratio R
                 int64_t n_elements = ggml_nelements(tensor);
-                double sum_abs = 0.0;
                 double sum_sq = 0.0;
-
                 std::vector<float> f_data(n_elements);
 
                 if (tensor->type == GGML_TYPE_F16) {
                     const ggml_fp16_t * data = (const ggml_fp16_t *) tensor->data;
                     for (int64_t i = 0; i < n_elements; i++) {
                         float val = ggml_fp16_to_fp32(data[i]);
-                        sum_abs += std::abs(val);
                         sum_sq += val * val;
                         f_data[i] = val;
                     }
@@ -994,28 +974,16 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
                     const float * data = (const float *) tensor->data;
                     for (int64_t i = 0; i < n_elements; i++) {
                         float val = data[i];
-                        sum_abs += std::abs(val);
                         sum_sq += val * val;
                         f_data[i] = val;
                     }
                 }
 
-                if (sum_sq > 0.0) {
-                    double mae = sum_abs / n_elements;
-                    double rms = std::sqrt(sum_sq / n_elements);
-                    double r = mae / rms;
-                    sum_r += (float) r;
-                    count_r++;
-                    LLAMA_LOG_INFO("%s: analyzed %s, MAE/RMS ratio R = %.5f\n", __func__, name.c_str(), r);
-                }
-
-                // Perform analytical RHT simulation to fit cb2 and cb3 scale tables
+                // Perform analytical RHT simulation to collect scale ratio samples
                 int64_t n_blocks = n_elements / 256;
-                if (n_blocks > 2000) n_blocks = 2000; // robust representative subset
+                if (n_blocks > 2000) n_blocks = 2000;
 
                 for (int64_t blk = 0; blk < n_blocks; blk++) {
-                    // Compute global super-block RMS
-                    // Simulated RHT transformation on each 32-element sub-block to collect samples in the actual rotated domain
                     float rotated_buf[256];
                     static const float TQ3_0_SIGNS[32] = {
                         +1.0f, -1.0f, +1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f,
@@ -1026,11 +994,9 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
 
                     for (int g = 0; g < 8; g++) {
                         float sub_buf[32];
-                        // Sign preconditioning applied FIRST (same as tq3_0_rht_forward)
                         for (int i = 0; i < 32; i++) {
                             sub_buf[i] = f_data.data()[blk * 256 + g * 32 + i] * TQ3_0_SIGNS[i];
                         }
-                        // In-place WHT butterfly (ascending, no per-step normalization)
                         for (int step = 1; step < 32; step <<= 1) {
                             for (int i = 0; i < 32; i += step << 1) {
                                 for (int j = i; j < i + step; j++) {
@@ -1040,13 +1006,11 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
                                 }
                             }
                         }
-                        // Normalize 1/sqrt(32) and copy to rotated_buf
                         for (int i = 0; i < 32; i++) {
                             rotated_buf[g * 32 + i] = sub_buf[i] * 0.176776695f;
                         }
                     }
 
-                    // Global RMS on 256 elements (invariant under orthogonal RHT, but computed on rotated for safety)
                     float global_sum = 0.0f;
                     for (int i = 0; i < 256; i++) {
                         global_sum += rotated_buf[i] * rotated_buf[i];
@@ -1054,12 +1018,6 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
                     float global_rms = sqrtf(global_sum / 256.0f);
                     if (global_rms < 1e-6f) continue;
 
-                    // Collect abs samples for k optimization
-                    for (int i = 0; i < 256; i++) {
-                        abs_samples.push_back(fabsf(rotated_buf[i]) / global_rms);
-                    }
-
-                    // Compute s2 RMS (32-element blocks) in the rotated domain
                     float s2_rms[8];
                     for (int b2 = 0; b2 < 8; b2++) {
                         float local_sum = 0.0f;
@@ -1070,7 +1028,6 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
                         r2_samples.push_back(s2_rms[b2] / global_rms);
                     }
 
-                    // Compute s3 RMS (8-element sub-blocks) in the rotated domain
                     for (int b3 = 0; b3 < 32; b3++) {
                         int b2 = b3 / 4;
                         float sub_sum = 0.0f;
@@ -1085,136 +1042,57 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
                     }
                 }
 
-                // Unload/clear temporary data pointer to prevent memory leaks
                 tensor->data = nullptr;
             }
         }
 
-        float mean_r = sum_r / count_r;
-        if (count_r > 0 && !abs_samples.empty()) {
-            float best_k = 1.072f;
-            float min_mse_k = 1e9f;
-            for (float k = 0.85f; k <= 1.25f; k += 0.02f) {
-                float c[4];
-                for (int i = 4; i < 8; i++) {
-                    float t = -1.0f + i * (2.0f / 7.0f);
-                    c[i-4] = powf(fabsf(t), k) * 1.996684f;
-                }
-                float mse = 0.0f;
-                for (float val : abs_samples) {
-                    float best_diff = 1e9f;
-                    for (int i = 0; i < 4; i++) {
-                        float diff = fabsf(val - c[i]);
-                        if (diff < best_diff) best_diff = diff;
-                    }
-                    mse += best_diff * best_diff;
-                }
-                if (mse < min_mse_k) {
-                    min_mse_k = mse;
-                    best_k = k;
-                }
-            }
-            tq3_rvq_k = best_k;
-            LLAMA_LOG_INFO("%s: data-driven grid search found optimal shape parameter k = %.4f (MSE=%.5f, mean R=%.5f)\n", __func__, tq3_rvq_k, min_mse_k/abs_samples.size(), mean_r);
-        } else {
-            LLAMA_LOG_WARN("%s: failed to find representative target weights for statistical scanning, using fallbacks\n", __func__);
-        }
-
-        // Fit learned scale codebooks (cb2 and cb3) using robust Data-Driven MSE Grid Search
+        // Fit learned scale codebooks (cb2 and cb3) using quantile-based bin averaging.
+        // This replaces the earlier power-law parametric grid search with a direct,
+        // assumption-free method: divide sorted ratio samples into equal-probability bins
+        // and take the bin mean. This is optimal 1D scalar quantization (Lloyd-Max
+        // initialization) for the observed distribution.
         if (!r2_samples.empty() && !r3_samples.empty()) {
             std::sort(r2_samples.begin(), r2_samples.end());
             std::sort(r3_samples.begin(), r3_samples.end());
 
             float learned_cb2[16];
             float learned_cb3[4];
-            
-            float best_p2 = 1.0f, best_p3 = 1.0f;
-            float min_mse2 = 1e9f, min_mse3 = 1e9f;
 
-            // Search best p_cb2 in [1.0, 1.8] to minimize quantization MSE on actual collected block RMS data
-            for (float p = 1.0f; p <= 1.85f; p += 0.05f) {
-                float cb[16];
-                for (int i = 0; i < 16; i++) {
-                    float t = -1.0f + i * (2.0f / 15.0f);
-                    float sign_t = (t < 0.0f) ? -1.0f : 1.0f;
-                    float pct = 0.5f + 0.5f * sign_t * powf(fabsf(t), p);
-                    pct = std::max(0.015f, std::min(0.985f, pct));
-                    int idx = (int)(pct * (r2_samples.size() - 1));
-                    cb[i] = r2_samples[idx];
+            // CB2: 16 equal-probability bins
+            for (int i = 0; i < 16; i++) {
+                int start_idx = (i * (int)r2_samples.size()) / 16;
+                int end_idx   = ((i + 1) * (int)r2_samples.size()) / 16;
+                if (end_idx > (int)r2_samples.size()) end_idx = (int)r2_samples.size();
+                if (end_idx <= start_idx) { end_idx = start_idx + 1; }
+                float sum = 0.0f;
+                for (int j = start_idx; j < end_idx; j++) {
+                    sum += r2_samples[j];
                 }
-                float mse = 0.0f;
-                for (float val : r2_samples) {
-                    float best_diff = 1e9f;
-                    for (int i = 0; i < 16; i++) {
-                        float diff = fabsf(val - cb[i]);
-                        if (diff < best_diff) best_diff = diff;
-                    }
-                    mse += best_diff * best_diff;
-                }
-                if (mse < min_mse2) {
-                    min_mse2 = mse;
-                    best_p2 = p;
-                    for (int i = 0; i < 16; i++) learned_cb2[i] = cb[i];
-                }
+                learned_cb2[i] = sum / (float)(end_idx - start_idx);
             }
 
-            // Search best p_cb3 in [1.0, 1.8] to minimize quantization MSE
-            for (float p = 1.0f; p <= 1.85f; p += 0.05f) {
-                float cb[4];
-                for (int i = 0; i < 4; i++) {
-                    float t = -1.0f + i * (2.0f / 3.0f);
-                    float sign_t = (t < 0.0f) ? -1.0f : 1.0f;
-                    float pct = 0.5f + 0.5f * sign_t * powf(fabsf(t), p);
-                    pct = std::max(0.03f, std::min(0.97f, pct));
-                    int idx = (int)(pct * (r3_samples.size() - 1));
-                    cb[i] = r3_samples[idx];
+            // CB3: 4 equal-probability bins
+            for (int i = 0; i < 4; i++) {
+                int start_idx = (i * (int)r3_samples.size()) / 4;
+                int end_idx   = ((i + 1) * (int)r3_samples.size()) / 4;
+                if (end_idx > (int)r3_samples.size()) end_idx = (int)r3_samples.size();
+                if (end_idx <= start_idx) { end_idx = start_idx + 1; }
+                float sum = 0.0f;
+                for (int j = start_idx; j < end_idx; j++) {
+                    sum += r3_samples[j];
                 }
-                float mse = 0.0f;
-                for (float val : r3_samples) {
-                    float best_diff = 1e9f;
-                    for (int i = 0; i < 4; i++) {
-                        float diff = fabsf(val - cb[i]);
-                        if (diff < best_diff) best_diff = diff;
-                    }
-                    mse += best_diff * best_diff;
-                }
-                if (mse < min_mse3) {
-                    min_mse3 = mse;
-                    best_p3 = p;
-                    for (int i = 0; i < 4; i++) learned_cb3[i] = cb[i];
-                }
+                learned_cb3[i] = sum / (float)(end_idx - start_idx);
             }
 
-            LLAMA_LOG_INFO("%s: data-driven grid search found optimal power factors: p_cb2 = %.2f (MSE=%.5f), p_cb3 = %.2f (MSE=%.5f)\n", 
-                           __func__, best_p2, min_mse2/r2_samples.size(), best_p3, min_mse3/r3_samples.size());
-
-            // Ensure monotonic ascending order
-            std::sort(learned_cb2, learned_cb2 + 16);
-            std::sort(learned_cb3, learned_cb3 + 4);
-
-            // Register optimal scale codebook globally
             tq3_rvq_set_codebook(learned_cb2, learned_cb3);
 
-            LLAMA_LOG_INFO("%s: dynamically fitted and learned optimal TQ3_RVQ scale codebooks from model weights!\n", __func__);
+            LLAMA_LOG_INFO("%s: quantile-based codebook fitting complete!\n", __func__);
             LLAMA_LOG_INFO("%s: learned cb2: ", __func__);
             for (int i = 0; i < 16; i++) LLAMA_LOG_INFO("%.4f ", learned_cb2[i]);
             LLAMA_LOG_INFO("\n%s: learned cb3: ", __func__);
             for (int i = 0; i < 4; i++) LLAMA_LOG_INFO("%.4f ", learned_cb3[i]);
             LLAMA_LOG_INFO("\n");
         }
-    }
-
-    const char * env_k = std::getenv("TQ3_RVQ_K");
-    if (env_k) {
-        tq3_rvq_k = std::strtof(env_k, nullptr);
-        LLAMA_LOG_INFO("%s: overriding optimal TQ3_RVQ shape parameter k with env TQ3_RVQ_K = %.3f\n", __func__, tq3_rvq_k);
-    }
-
-    LLAMA_LOG_INFO("%s: selected optimal shape parameter k = %.3f for TQ3_RVQ based on model properties\n", __func__, tq3_rvq_k);
-
-    // Initialize the CPU codebook and CUDA synchronization with the selected k
-    if (default_type == GGML_TYPE_TQ3_RVQ) {
-        tq3_rvq_init_from_k(tq3_rvq_k);
     }
 
 
@@ -1432,12 +1310,14 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
         // This ensures the GGUF header size is fixed; we update the values after quantization.
         if (default_type == GGML_TYPE_TQ3_RVQ) {
             static const float zeros16[16] = {};
+            static const float zeros8[8]   = {};
             static const float zeros4[4]   = {};
             gguf_set_arr_data(ctx_outs[0].get(), "turbo_quant.tq3_rvq.codebook2",
                               GGUF_TYPE_FLOAT32, zeros16, 16);
             gguf_set_arr_data(ctx_outs[0].get(), "turbo_quant.tq3_rvq.codebook3",
                               GGUF_TYPE_FLOAT32, zeros4, 4);
-            gguf_set_val_f32(ctx_outs[0].get(), "turbo_quant.tq3_rvq.k", tq3_rvq_k);
+            gguf_set_arr_data(ctx_outs[0].get(), "turbo_quant.tq3_rvq.centroids",
+                              GGUF_TYPE_FLOAT32, zeros8, 8);
         }
         new_ofstream(0);
     }
@@ -1601,13 +1481,16 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
         // The slot was pre-allocated with zeros before the file was opened, so the header
         // size does not change and the file remains valid.
         if (default_type == GGML_TYPE_TQ3_RVQ) {
-            float saved_cb2[16], saved_cb3[4];
+            float saved_cb2[16], saved_cb3[4], saved_centroids[8];
             tq3_rvq_get_codebook(saved_cb2, saved_cb3);
+            tq3_rvq_get_centroids(saved_centroids);
             gguf_set_arr_data(ctx_outs[0].get(), "turbo_quant.tq3_rvq.codebook2",
                               GGUF_TYPE_FLOAT32, saved_cb2, 16);
             gguf_set_arr_data(ctx_outs[0].get(), "turbo_quant.tq3_rvq.codebook3",
                               GGUF_TYPE_FLOAT32, saved_cb3, 4);
-            LLAMA_LOG_INFO("%s: saved TQ3_RVQ adaptive codebook to GGUF metadata (80 bytes)\n", __func__);
+            gguf_set_arr_data(ctx_outs[0].get(), "turbo_quant.tq3_rvq.centroids",
+                              GGUF_TYPE_FLOAT32, saved_centroids, 8);
+            LLAMA_LOG_INFO("%s: saved TQ3_RVQ adaptive codebook to GGUF metadata (112 bytes)\n", __func__);
         }
         close_ofstream();
     }
