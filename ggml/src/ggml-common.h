@@ -356,6 +356,17 @@ typedef struct {
 } block_tq3_1s;                         // 16 bytes total
 static_assert(sizeof(block_tq3_1s) == 16, "wrong tq3_1s block size");
 
+// TQ3_4S: WHT-rotated 3-bit weight quantization with 4 sub-block scales
+// Block size 32, quad sub-block scales (ds[0..3] for 8 elements each)
+// Per block: 4x FP8 scales (4 bytes) + 3-bit indices packed (12 bytes) = 16 bytes per 32 values
+// = 4.0 bits/value
+#define QK_TQ3_4S 32
+typedef struct {
+    int8_t   ds[4];                        //  4 bytes: FP8 E4M3 scales, one per 8-element sub-block
+    uint8_t  qs[QK_TQ3_4S * 3 / 8];       // 12 bytes: 3-bit indices packed
+} block_tq3_4s;                             // 16 bytes total
+static_assert(sizeof(block_tq3_4s) == 16, "wrong tq3_4s block size");
+
 // TQ4_1S: WHT-rotated 4-bit weight quantization (16-level Lloyd-Max for N(0,1))
 // Block size 32, dual half-block scales (d0 for [0..15], d1 for [16..31])
 // Per block: d0(fp16) + d1(fp16) + 4-bit indices packed (16 bytes) = 20 bytes per 32 values

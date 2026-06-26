@@ -435,7 +435,10 @@ extern "C" {
         GGML_TYPE_TQ3_1S  = 45, // TurboQuant 3-bit weight: WHT-rotated 8-level Lloyd-Max, block_size=32
         GGML_TYPE_TQ4_1S  = 46, // TurboQuant 4-bit weight: WHT-rotated 16-level Lloyd-Max, block_size=32
         GGML_TYPE_TQ3_RVQ = 47, // TurboQuant 3-bit weight: Residual Vector Quantization, block_size=256
-        GGML_TYPE_COUNT   = 48,
+        GGML_TYPE_TQ3_1S_RIM = 48, // TurboQuant 3-bit 1-Scale Refinement + Importance Matrix (IR loop + IM)
+        GGML_TYPE_TQ3_4S    = 49, // TurboQuant 3-bit 4-Scale: WHT-rotated 3-bit, 4 FP8 scales per block
+        GGML_TYPE_TQ3_1S_PS = 50, // TurboQuant 3-bit 1-Scale with multi-pattern WHT search (PS, 8 patterns)
+        GGML_TYPE_COUNT   = 51,
     };
 
     // precision

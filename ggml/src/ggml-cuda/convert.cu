@@ -814,6 +814,8 @@ to_fp16_cuda_t ggml_get_to_fp16_cuda(ggml_type type) {
             return dequantize_tq4_1s_warp_cuda<half>;  // fast warp-cooperative WHT
         case GGML_TYPE_TQ3_1S:
             return dequantize_block_cont_cuda<QK_TQ3_0, QR_TQ3_1S, dequantize_tq3_1s>;
+        case GGML_TYPE_TQ3_1S_PS:
+            return dequantize_block_cont_cuda<QK_TQ3_0, QR_TQ3_1S_PS, dequantize_tq3_1s_ps>;
         case GGML_TYPE_TQ3_RVQ:
             convert_sync_tq3_rvq_codebook();
             return dequantize_block_cont_cuda<QK_TQ3_RVQ, QR_TQ3_RVQ, dequantize_tq3_rvq, half>;
@@ -882,6 +884,8 @@ to_fp32_cuda_t ggml_get_to_fp32_cuda(ggml_type type) {
             return dequantize_tq4_1s_warp_cuda<float>;  // fast warp-cooperative WHT
         case GGML_TYPE_TQ3_1S:
             return dequantize_block_cont_cuda<QK_TQ3_0, QR_TQ3_1S, dequantize_tq3_1s>;
+        case GGML_TYPE_TQ3_1S_PS:
+            return dequantize_block_cont_cuda<QK_TQ3_0, QR_TQ3_1S_PS, dequantize_tq3_1s_ps>;
         case GGML_TYPE_TQ3_RVQ:
             convert_sync_tq3_rvq_codebook();
             return dequantize_block_cont_cuda<QK_TQ3_RVQ, QR_TQ3_RVQ, dequantize_tq3_rvq, float>;
@@ -920,6 +924,8 @@ to_fp16_nc_cuda_t ggml_get_to_fp16_nc_cuda(ggml_type type) {
             return dequantize_block_cuda<QK_TQ4_1S, QR_TQ4_1S, dequantize_tq4_1s>;
         case GGML_TYPE_TQ3_1S:
             return dequantize_block_cuda<QK_TQ3_0, QR_TQ3_1S, dequantize_tq3_1s>;
+        case GGML_TYPE_TQ3_1S_PS:
+            return dequantize_block_cuda<QK_TQ3_0, QR_TQ3_1S_PS, dequantize_tq3_1s_ps>;
         case GGML_TYPE_TQ3_RVQ:
             convert_sync_tq3_rvq_codebook();
             return dequantize_block_cuda<QK_TQ3_RVQ, QR_TQ3_RVQ, dequantize_tq3_rvq>;
@@ -997,6 +1003,8 @@ to_fp32_nc_cuda_t ggml_get_to_fp32_nc_cuda(ggml_type type) {
             return dequantize_block_cuda<QK_TQ4_1S, QR_TQ4_1S, dequantize_tq4_1s>;
         case GGML_TYPE_TQ3_1S:
             return dequantize_block_cuda<QK_TQ3_0, QR_TQ3_1S, dequantize_tq3_1s>;
+        case GGML_TYPE_TQ3_1S_PS:
+            return dequantize_block_cuda<QK_TQ3_0, QR_TQ3_1S_PS, dequantize_tq3_1s_ps>;
         case GGML_TYPE_TQ3_RVQ:
             convert_sync_tq3_rvq_codebook();
             return dequantize_block_cuda<QK_TQ3_RVQ, QR_TQ3_RVQ, dequantize_tq3_rvq>;

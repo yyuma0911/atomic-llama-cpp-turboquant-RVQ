@@ -428,6 +428,8 @@ static __device__ __forceinline__ float turbo2_dequant_element(
 
 #define QR_TQ4_1S 1  // dequantize produces 2 consecutive elements
 #define QR_TQ3_1S 1
+#define QR_TQ3_4S 1
+#define QR_TQ3_1S_PS 1
 
 // TQ3_RVQ: Residual Vector Quantization for 3-bit weights, block_size=256
 // 3-bit uniform quantization + 4-bit RVQ (8 blocks) + 2-bit RVQ (32 sub-blocks)
@@ -469,3 +471,117 @@ static __constant__ float TQ_WEIGHT_SIGNS[32] = {
     -1.0f, -1.0f, +1.0f, -1.0f, +1.0f, -1.0f, -1.0f, +1.0f,
     -1.0f, +1.0f, +1.0f, -1.0f, +1.0f, -1.0f, -1.0f, +1.0f
 };
+
+// ---- PS multi-pattern WHT sign arrays (seeds 100, 200, 300) ----
+
+static __constant__ float TQ_WEIGHT_SIGNS_PS1[32] = {
+    -1.0f, -1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f, -1.0f,
+    +1.0f, +1.0f, -1.0f, +1.0f, +1.0f, +1.0f, -1.0f, +1.0f,
+    -1.0f, +1.0f, +1.0f, -1.0f, -1.0f, +1.0f, +1.0f, +1.0f,
+    +1.0f, -1.0f, -1.0f, +1.0f, -1.0f, +1.0f, +1.0f, -1.0f
+};
+
+static __constant__ float TQ_WEIGHT_SIGNS_PS2[32] = {
+    -1.0f, -1.0f, +1.0f, +1.0f, +1.0f, -1.0f, -1.0f, -1.0f,
+    -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, +1.0f,
+    -1.0f, +1.0f, +1.0f, +1.0f, +1.0f, +1.0f, -1.0f, +1.0f,
+    -1.0f, -1.0f, -1.0f, +1.0f, +1.0f, +1.0f, -1.0f, +1.0f
+};
+
+static __constant__ float TQ_WEIGHT_SIGNS_PS3[32] = {
+    +1.0f, -1.0f, -1.0f, -1.0f, +1.0f, -1.0f, +1.0f, -1.0f,
+    +1.0f, -1.0f, +1.0f, -1.0f, +1.0f, +1.0f, +1.0f, +1.0f,
+    +1.0f, +1.0f, -1.0f, -1.0f, -1.0f, +1.0f, +1.0f, +1.0f,
+    -1.0f, +1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f, -1.0f
+};
+
+// ---- PS multi-pattern WHT sign arrays (seeds 400, 500, 600, 700) ----
+
+static __constant__ float TQ_WEIGHT_SIGNS_PS4[32] = {
+    -1.0f, -1.0f, -1.0f, +1.0f, +1.0f, +1.0f, +1.0f, -1.0f,
+    -1.0f, +1.0f, -1.0f, +1.0f, -1.0f, -1.0f, -1.0f, +1.0f,
+    +1.0f, +1.0f, +1.0f, +1.0f, +1.0f, +1.0f, +1.0f, +1.0f,
+    -1.0f, +1.0f, -1.0f, +1.0f, -1.0f, -1.0f, -1.0f, -1.0f
+};
+
+static __constant__ float TQ_WEIGHT_SIGNS_PS5[32] = {
+    +1.0f, +1.0f, +1.0f, +1.0f, +1.0f, -1.0f, +1.0f, +1.0f,
+    -1.0f, -1.0f, -1.0f, +1.0f, -1.0f, +1.0f, +1.0f, +1.0f,
+    +1.0f, -1.0f, +1.0f, +1.0f, -1.0f, -1.0f, +1.0f, +1.0f,
+    +1.0f, -1.0f, +1.0f, +1.0f, -1.0f, -1.0f, -1.0f, +1.0f
+};
+
+static __constant__ float TQ_WEIGHT_SIGNS_PS6[32] = {
+    -1.0f, -1.0f, +1.0f, +1.0f, +1.0f, +1.0f, -1.0f, -1.0f,
+    +1.0f, +1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f, -1.0f,
+    +1.0f, -1.0f, +1.0f, -1.0f, -1.0f, +1.0f, -1.0f, +1.0f,
+    -1.0f, +1.0f, +1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f
+};
+
+static __constant__ float TQ_WEIGHT_SIGNS_PS7[32] = {
+    +1.0f, +1.0f, +1.0f, +1.0f, -1.0f, -1.0f, -1.0f, +1.0f,
+    +1.0f, -1.0f, +1.0f, -1.0f, -1.0f, -1.0f, -1.0f, +1.0f,
+    +1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f, -1.0f, -1.0f,
+    +1.0f, -1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f, +1.0f
+};
+
+// ---- PS multi-pattern WHT sign arrays (seeds 800, 900, 1000, 1100) ----
+
+static __constant__ float TQ_WEIGHT_SIGNS_PS8[32] = {
+    -1.0f, -1.0f, -1.0f, +1.0f, -1.0f, -1.0f, -1.0f, -1.0f,
+    +1.0f, +1.0f, -1.0f, +1.0f, +1.0f, -1.0f, -1.0f, -1.0f,
+    -1.0f, -1.0f, -1.0f, +1.0f, +1.0f, +1.0f, -1.0f, +1.0f,
+    -1.0f, -1.0f, +1.0f, -1.0f, -1.0f, -1.0f, -1.0f, +1.0f
+};
+
+static __constant__ float TQ_WEIGHT_SIGNS_PS9[32] = {
+    -1.0f, -1.0f, -1.0f, +1.0f, -1.0f, -1.0f, -1.0f, +1.0f,
+    -1.0f, -1.0f, -1.0f, -1.0f, +1.0f, +1.0f, -1.0f, -1.0f,
+    +1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f, +1.0f, +1.0f,
+    -1.0f, +1.0f, -1.0f, -1.0f, -1.0f, +1.0f, -1.0f, -1.0f
+};
+
+static __constant__ float TQ_WEIGHT_SIGNS_PS10[32] = {
+    -1.0f, +1.0f, -1.0f, +1.0f, +1.0f, +1.0f, +1.0f, +1.0f,
+    +1.0f, +1.0f, -1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f,
+    +1.0f, -1.0f, +1.0f, -1.0f, +1.0f, +1.0f, +1.0f, +1.0f,
+    -1.0f, +1.0f, -1.0f, +1.0f, -1.0f, -1.0f, -1.0f, +1.0f
+};
+
+static __constant__ float TQ_WEIGHT_SIGNS_PS11[32] = {
+    -1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f, +1.0f, -1.0f,
+    +1.0f, +1.0f, +1.0f, +1.0f, +1.0f, +1.0f, +1.0f, -1.0f,
+    +1.0f, +1.0f, -1.0f, +1.0f, -1.0f, -1.0f, -1.0f, -1.0f,
+    -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, +1.0f
+};
+
+// ---- PS multi-pattern WHT sign arrays (seeds 1200, 1300, 1400, 1500) ----
+
+static __constant__ float TQ_WEIGHT_SIGNS_PS12[32] = {
+    -1.0f, +1.0f, -1.0f, +1.0f, -1.0f, -1.0f, +1.0f, -1.0f,
+    +1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f, -1.0f, +1.0f,
+    +1.0f, -1.0f, -1.0f, -1.0f, +1.0f, +1.0f, +1.0f, -1.0f,
+    -1.0f, +1.0f, -1.0f, +1.0f, +1.0f, -1.0f, -1.0f, +1.0f
+};
+
+static __constant__ float TQ_WEIGHT_SIGNS_PS13[32] = {
+    +1.0f, -1.0f, -1.0f, -1.0f, +1.0f, -1.0f, +1.0f, +1.0f,
+    +1.0f, +1.0f, +1.0f, +1.0f, -1.0f, -1.0f, +1.0f, -1.0f,
+    -1.0f, +1.0f, -1.0f, +1.0f, -1.0f, +1.0f, +1.0f, +1.0f,
+    -1.0f, -1.0f, -1.0f, +1.0f, -1.0f, -1.0f, -1.0f, -1.0f
+};
+
+static __constant__ float TQ_WEIGHT_SIGNS_PS14[32] = {
+    +1.0f, -1.0f, -1.0f, +1.0f, -1.0f, -1.0f, +1.0f, +1.0f,
+    +1.0f, -1.0f, +1.0f, +1.0f, -1.0f, -1.0f, -1.0f, +1.0f,
+    -1.0f, +1.0f, +1.0f, -1.0f, +1.0f, -1.0f, +1.0f, +1.0f,
+    -1.0f, +1.0f, +1.0f, +1.0f, +1.0f, -1.0f, -1.0f, +1.0f
+};
+
+static __constant__ float TQ_WEIGHT_SIGNS_PS15[32] = {
+    -1.0f, +1.0f, +1.0f, -1.0f, +1.0f, -1.0f, -1.0f, -1.0f,
+    -1.0f, +1.0f, -1.0f, -1.0f, -1.0f, -1.0f, +1.0f, -1.0f,
+    +1.0f, +1.0f, -1.0f, +1.0f, +1.0f, +1.0f, -1.0f, -1.0f,
+    +1.0f, +1.0f, -1.0f, -1.0f, -1.0f, -1.0f, +1.0f, +1.0f
+};
+

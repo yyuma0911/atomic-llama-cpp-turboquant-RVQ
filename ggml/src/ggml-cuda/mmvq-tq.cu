@@ -8,6 +8,7 @@
 #include "mmvq-tq.cuh"
 #include "turbo-quant.cuh"
 #include "convert.cuh"
+#include "dequantize.cuh"
 
 #define MMVQ_TQ_NWARPS 4
 
@@ -526,11 +527,74 @@ static void launch_tq3_1s_multi(
         src0_d, act_buf, dst_d, ncols_x, nrows_x, stride_col_y, stride_col_dst);
 }
 
+// Multi-token TQ3_4S scalar kernel — quad FP8 E4M3 sub-block scales
+template <int ncols_dst>
+static __global__ void mul_mat_tq3_4s_multi(
+        const void  * __restrict__ vx,
+        const half  * __restrict__ vy_rot,
+        float       * __restrict__ dst,
+        const int ncols_x,
+        const int nrows_x,
+        const int stride_col_y,
+        const int stride_col_dst) {
+
+    __shared__ float s_lut[8];
+    if (threadIdx.y == 0 && threadIdx.x < 8) {
+        s_lut[threadIdx.x] = TQ3_CENTROIDS_WEIGHT[threadIdx.x];
+    }
+    __syncthreads();
+
+    const int row  = blockIdx.x * MMVQ_TQ_NWARPS + threadIdx.y;
+    if (row >= nrows_x) return;
+
+    const int lane = threadIdx.x;
+    const int blocks_per_row = ncols_x / QK_TQ3_4S;
+    const block_tq3_4s * x_row = ((const block_tq3_4s *) vx) + (int64_t)row * blocks_per_row;
+
+    float sumf[ncols_dst] = {};
+
+    for (int ib = 0; ib < blocks_per_row; ib++) {
+        const float d = fp8e4m3_decode_gpu(x_row[ib].ds[lane / 8]);
+        const uint8_t idx = tq3_extract_index(x_row[ib].qs, lane);
+        const float w = s_lut[idx] * d;
+
+        #pragma unroll
+        for (int j = 0; j < ncols_dst; j++) {
+            const float act = __half2float(vy_rot[j * stride_col_y + ib * QK_TQ3_4S + lane]);
+            sumf[j] += act * w;
+        }
+    }
+
+    #pragma unroll
+    for (int offset = 16; offset > 0; offset >>= 1) {
+        #pragma unroll
+        for (int j = 0; j < ncols_dst; j++)
+            sumf[j] += __shfl_xor_sync(0xffffffff, sumf[j], offset);
+    }
+
+    if (lane == 0) {
+        #pragma unroll
+        for (int j = 0; j < ncols_dst; j++)
+            dst[j * stride_col_dst + row] = sumf[j];
+    }
+}
+
+template <int ncols_dst>
+static void launch_tq3_4s_multi(
+        const void * src0_d, const half * act_buf,
+        float * dst_d, int ncols_x, int nrows_x,
+        int stride_col_y, int stride_col_dst, cudaStream_t stream) {
+    const dim3 block(WARP_SIZE, MMVQ_TQ_NWARPS);
+    const dim3 grid((nrows_x + MMVQ_TQ_NWARPS - 1) / MMVQ_TQ_NWARPS);
+    mul_mat_tq3_4s_multi<ncols_dst><<<grid, block, 0, stream>>>(
+        src0_d, act_buf, dst_d, ncols_x, nrows_x, stride_col_y, stride_col_dst);
+}
+
 void ggml_cuda_mul_mat_tq(ggml_backend_cuda_context & ctx,
                            const ggml_tensor * src0,
                            const ggml_tensor * src1,
                            ggml_tensor * dst) {
-    GGML_ASSERT(src0->type == GGML_TYPE_TQ4_1S || src0->type == GGML_TYPE_TQ3_1S);
+    GGML_ASSERT(src0->type == GGML_TYPE_TQ4_1S || src0->type == GGML_TYPE_TQ3_1S || src0->type == GGML_TYPE_TQ3_1S_RIM || src0->type == GGML_TYPE_TQ3_1S_PS || src0->type == GGML_TYPE_TQ3_4S);
     GGML_ASSERT(src1->type == GGML_TYPE_F32);
     GGML_ASSERT(dst->type  == GGML_TYPE_F32);
 
@@ -590,12 +654,17 @@ void ggml_cuda_mul_mat_tq(ggml_backend_cuda_context & ctx,
 
         const int stride_col_y   = ncols_x;  // half elements per column
         const int stride_col_dst = nrows_x;
+        // TQ3_1S_RIM uses the same block_tq3_1s structure as TQ3_1S, so the same GPU kernel works
         const bool is_tq4 = (src0->type == GGML_TYPE_TQ4_1S);
+        const bool is_tq3_4s = (src0->type == GGML_TYPE_TQ3_4S);
+        const bool is_tq3_ps = (src0->type == GGML_TYPE_TQ3_1S_PS);
 
         // Macro to dispatch to the right kernel based on quant type
         #define LAUNCH_SCALAR(N, src0_ptr, act_ptr, dst_ptr) \
-            if (is_tq4) { launch_tq4_1s_scalar_multi<N>(src0_ptr, act_ptr, dst_ptr, ncols_x, nrows_x, stride_col_y, stride_col_dst, stream); } \
-            else        { launch_tq3_1s_multi<N>(src0_ptr, act_ptr, dst_ptr, ncols_x, nrows_x, stride_col_y, stride_col_dst, stream); }
+            if (is_tq4)      { launch_tq4_1s_scalar_multi<N>(src0_ptr, act_ptr, dst_ptr, ncols_x, nrows_x, stride_col_y, stride_col_dst, stream); } \
+            else if (is_tq3_4s) { launch_tq3_4s_multi<N>(src0_ptr, act_ptr, dst_ptr, ncols_x, nrows_x, stride_col_y, stride_col_dst, stream); } \
+            else if (is_tq3_ps) { launch_tq3_1s_multi<N>(src0_ptr, act_ptr, dst_ptr, ncols_x, nrows_x, stride_col_y, stride_col_dst, stream); } \
+            else              { launch_tq3_1s_multi<N>(src0_ptr, act_ptr, dst_ptr, ncols_x, nrows_x, stride_col_y, stride_col_dst, stream); }
 
         if (ncols_dst <= 8) {
             switch (ncols_dst) {

@@ -821,6 +821,9 @@ ggml_type llama_ftype_get_default_type(llama_ftype ftype) {
         case LLAMA_FTYPE_MOSTLY_TQ3_1S:  return GGML_TYPE_TQ3_1S;
         case LLAMA_FTYPE_MOSTLY_TQ4_1S:  return GGML_TYPE_TQ4_1S;
         case LLAMA_FTYPE_MOSTLY_TQ3_RVQ:  return GGML_TYPE_TQ3_RVQ;
+        case LLAMA_FTYPE_MOSTLY_TQ3_1S_RIM:  return GGML_TYPE_TQ3_1S_RIM;
+        case LLAMA_FTYPE_MOSTLY_TQ3_4S:  return GGML_TYPE_TQ3_4S;
+        case LLAMA_FTYPE_MOSTLY_TQ3_1S_PS:  return GGML_TYPE_TQ3_1S_PS;
         case LLAMA_FTYPE_MOSTLY_IQ2_XXS: return GGML_TYPE_IQ2_XXS;
         case LLAMA_FTYPE_MOSTLY_IQ2_XS:  return GGML_TYPE_IQ2_XS;
         case LLAMA_FTYPE_MOSTLY_IQ2_S:   return GGML_TYPE_IQ2_XS;

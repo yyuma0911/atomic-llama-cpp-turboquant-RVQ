@@ -682,6 +682,110 @@ static const float TQ3_0_SIGNS[32] = {
     -1.0f, +1.0f, +1.0f, -1.0f, +1.0f, -1.0f, -1.0f, +1.0f,
 };
 
+/* 16 WHT sign patterns for PS (Pattern Selection multi-pattern search).
+ * Patterns 0..3 correspond to seeds 42(default), 100, 200, 300.
+ * Patterns 4..7 correspond to seeds 400, 500, 600, 700.
+ * Patterns 8..15 correspond to seeds 800, 900, 1000, 1100, 1200, 1300, 1400, 1500.
+ * Pattern 0 matches TQ3_0_SIGNS (default). */
+static const float TQ3_0_SIGNS_PS[16][32] = {
+    {  /* pattern 0 — default (seed 42) */
+        +1.0f, -1.0f, +1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f,
+        -1.0f, -1.0f, +1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f,
+        -1.0f, -1.0f, +1.0f, -1.0f, +1.0f, -1.0f, -1.0f, +1.0f,
+        -1.0f, +1.0f, +1.0f, -1.0f, +1.0f, -1.0f, -1.0f, +1.0f,
+    },
+    {  /* pattern 1 — seed 100 */
+        -1.0f, -1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f, -1.0f,
+        +1.0f, +1.0f, -1.0f, +1.0f, +1.0f, +1.0f, -1.0f, +1.0f,
+        -1.0f, +1.0f, +1.0f, -1.0f, -1.0f, +1.0f, +1.0f, +1.0f,
+        +1.0f, -1.0f, -1.0f, +1.0f, -1.0f, +1.0f, +1.0f, -1.0f,
+    },
+    {  /* pattern 2 — seed 200 */
+        -1.0f, -1.0f, +1.0f, +1.0f, +1.0f, -1.0f, -1.0f, -1.0f,
+        -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, +1.0f,
+        -1.0f, +1.0f, +1.0f, +1.0f, +1.0f, +1.0f, -1.0f, +1.0f,
+        -1.0f, -1.0f, -1.0f, +1.0f, +1.0f, +1.0f, -1.0f, +1.0f,
+    },
+    {  /* pattern 3 — seed 300 */
+        +1.0f, -1.0f, -1.0f, -1.0f, +1.0f, -1.0f, +1.0f, -1.0f,
+        +1.0f, -1.0f, +1.0f, -1.0f, +1.0f, +1.0f, +1.0f, +1.0f,
+        +1.0f, +1.0f, -1.0f, -1.0f, -1.0f, +1.0f, +1.0f, +1.0f,
+        -1.0f, +1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f, -1.0f,
+    },
+    {  /* pattern 4 — seed 400 */
+        -1.0f, -1.0f, -1.0f, +1.0f, +1.0f, +1.0f, +1.0f, -1.0f,
+        -1.0f, +1.0f, -1.0f, +1.0f, -1.0f, -1.0f, -1.0f, +1.0f,
+        +1.0f, +1.0f, +1.0f, +1.0f, +1.0f, +1.0f, +1.0f, +1.0f,
+        -1.0f, +1.0f, -1.0f, +1.0f, -1.0f, -1.0f, -1.0f, -1.0f,
+    },
+    {  /* pattern 5 — seed 500 */
+        +1.0f, +1.0f, +1.0f, +1.0f, +1.0f, -1.0f, +1.0f, +1.0f,
+        -1.0f, -1.0f, -1.0f, +1.0f, -1.0f, +1.0f, +1.0f, +1.0f,
+        +1.0f, -1.0f, +1.0f, +1.0f, -1.0f, -1.0f, +1.0f, +1.0f,
+        +1.0f, -1.0f, +1.0f, +1.0f, -1.0f, -1.0f, -1.0f, +1.0f,
+    },
+    {  /* pattern 6 — seed 600 */
+        -1.0f, -1.0f, +1.0f, +1.0f, +1.0f, +1.0f, -1.0f, -1.0f,
+        +1.0f, +1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f, -1.0f,
+        +1.0f, -1.0f, +1.0f, -1.0f, -1.0f, +1.0f, -1.0f, +1.0f,
+        -1.0f, +1.0f, +1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f,
+    },
+    {  /* pattern 7 — seed 700 */
+        +1.0f, +1.0f, +1.0f, +1.0f, -1.0f, -1.0f, -1.0f, +1.0f,
+        +1.0f, -1.0f, +1.0f, -1.0f, -1.0f, -1.0f, -1.0f, +1.0f,
+        +1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f, -1.0f, -1.0f,
+        +1.0f, -1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f, +1.0f,
+    },
+    {  /* pattern 8 — seed 800 */
+        -1.0f, -1.0f, -1.0f, +1.0f, -1.0f, -1.0f, -1.0f, -1.0f,
+        +1.0f, +1.0f, -1.0f, +1.0f, +1.0f, -1.0f, -1.0f, -1.0f,
+        -1.0f, -1.0f, -1.0f, +1.0f, +1.0f, +1.0f, -1.0f, +1.0f,
+        -1.0f, -1.0f, +1.0f, -1.0f, -1.0f, -1.0f, -1.0f, +1.0f,
+    },
+    {  /* pattern 9 — seed 900 */
+        -1.0f, -1.0f, -1.0f, +1.0f, -1.0f, -1.0f, -1.0f, +1.0f,
+        -1.0f, -1.0f, -1.0f, -1.0f, +1.0f, +1.0f, -1.0f, -1.0f,
+        +1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f, +1.0f, +1.0f,
+        -1.0f, +1.0f, -1.0f, -1.0f, -1.0f, +1.0f, -1.0f, -1.0f,
+    },
+    {  /* pattern 10 — seed 1000 */
+        -1.0f, +1.0f, -1.0f, +1.0f, +1.0f, +1.0f, +1.0f, +1.0f,
+        +1.0f, +1.0f, -1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f,
+        +1.0f, -1.0f, +1.0f, -1.0f, +1.0f, +1.0f, +1.0f, +1.0f,
+        -1.0f, +1.0f, -1.0f, +1.0f, -1.0f, -1.0f, -1.0f, +1.0f,
+    },
+    {  /* pattern 11 — seed 1100 */
+        -1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f, +1.0f, -1.0f,
+        +1.0f, +1.0f, +1.0f, +1.0f, +1.0f, +1.0f, +1.0f, -1.0f,
+        +1.0f, +1.0f, -1.0f, +1.0f, -1.0f, -1.0f, -1.0f, -1.0f,
+        -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, +1.0f,
+    },
+    {  /* pattern 12 — seed 1200 */
+        -1.0f, +1.0f, -1.0f, +1.0f, -1.0f, -1.0f, +1.0f, -1.0f,
+        +1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f, -1.0f, +1.0f,
+        +1.0f, -1.0f, -1.0f, -1.0f, +1.0f, +1.0f, +1.0f, -1.0f,
+        -1.0f, +1.0f, -1.0f, +1.0f, +1.0f, -1.0f, -1.0f, +1.0f,
+    },
+    {  /* pattern 13 — seed 1300 */
+        +1.0f, -1.0f, -1.0f, -1.0f, +1.0f, -1.0f, +1.0f, +1.0f,
+        +1.0f, +1.0f, +1.0f, +1.0f, -1.0f, -1.0f, +1.0f, -1.0f,
+        -1.0f, +1.0f, -1.0f, +1.0f, -1.0f, +1.0f, +1.0f, +1.0f,
+        -1.0f, -1.0f, -1.0f, +1.0f, -1.0f, -1.0f, -1.0f, -1.0f,
+    },
+    {  /* pattern 14 — seed 1400 */
+        +1.0f, -1.0f, -1.0f, +1.0f, -1.0f, -1.0f, +1.0f, +1.0f,
+        +1.0f, -1.0f, +1.0f, +1.0f, -1.0f, -1.0f, -1.0f, +1.0f,
+        -1.0f, +1.0f, +1.0f, -1.0f, +1.0f, -1.0f, +1.0f, +1.0f,
+        -1.0f, +1.0f, +1.0f, +1.0f, +1.0f, -1.0f, -1.0f, +1.0f,
+    },
+    {  /* pattern 15 — seed 1500 */
+        -1.0f, +1.0f, +1.0f, -1.0f, +1.0f, -1.0f, -1.0f, -1.0f,
+        -1.0f, +1.0f, -1.0f, -1.0f, -1.0f, -1.0f, +1.0f, -1.0f,
+        +1.0f, +1.0f, -1.0f, +1.0f, +1.0f, +1.0f, -1.0f, -1.0f,
+        +1.0f, +1.0f, -1.0f, -1.0f, -1.0f, -1.0f, +1.0f, +1.0f,
+    },
+};
+
 #define TQ_BLOCK_SIZE 32
 #define TQ_INV_SQRT32 0.17677669529663688f  /* 1/sqrt(32) */
 
@@ -712,6 +816,77 @@ static void tq3_0_rht_inverse(float * buf) {
         }
     }
     for (int i = 0; i < TQ_BLOCK_SIZE; i++) buf[i] *= TQ_INV_SQRT32 * TQ3_0_SIGNS[i];
+}
+
+/* Forward RHT with custom sign pattern (PS) */
+static void tq3_0_rht_forward_ps(float * buf, const float * signs) {
+    for (int i = 0; i < TQ_BLOCK_SIZE; i++) buf[i] *= signs[i];
+    for (int step = 1; step < TQ_BLOCK_SIZE; step <<= 1) {
+        for (int i = 0; i < TQ_BLOCK_SIZE; i += step << 1) {
+            for (int j = i; j < i + step; j++) {
+                float a = buf[j], b = buf[j + step];
+                buf[j]     = a + b;
+                buf[j + step] = a - b;
+            }
+        }
+    }
+    for (int i = 0; i < TQ_BLOCK_SIZE; i++) buf[i] *= TQ_INV_SQRT32;
+}
+
+/* Inverse RHT with custom sign pattern (PS) */
+static void tq3_0_rht_inverse_ps(float * buf, const float * signs) {
+    for (int step = 1; step < TQ_BLOCK_SIZE; step <<= 1) {
+        for (int i = 0; i < TQ_BLOCK_SIZE; i += step << 1) {
+            for (int j = i; j < i + step; j++) {
+                float a = buf[j], b = buf[j + step];
+                buf[j]     = a + b;
+                buf[j + step] = a - b;
+            }
+        }
+    }
+    for (int i = 0; i < TQ_BLOCK_SIZE; i++) buf[i] *= TQ_INV_SQRT32 * signs[i];
+}
+
+/* FP8 E4M3 encode */
+static int8_t fp8e4m3_encode(float x) {
+    if (x == 0.0f) return 0;
+    int sign = (x < 0) ? 0x80 : 0;
+    x = fabsf(x);
+    int exp;
+    float mant = frexpf(x, &exp);
+    /* E4M3: (-1)^s * 2^(e-7) * (1 + m/8) for normals, (-1)^s * 2^(-6) * m/8 for denormals.
+     * frexp gives mant in [0.5, 1.0). For x = mant * 2^exp, the E4M3 exponent = exp-1.
+     * Biased exponent = (exp-1) + 7 = exp + 6. */
+    int biased_exp = exp + 6;
+    if (biased_exp < 1) {
+        /* Denormal or underflow: value = m/8 * 2^(-6), so m = x * 2^9 = mant * 2^exp * 2^9 = mant * 2^(exp+9) = mant * 2^(biased_exp+3) */
+        if (biased_exp < -3) return (int8_t)sign;  /* underflow to zero */
+        /* m = mant * 2^(biased_exp + 3), since denormal value = m/8 * 2^(-6) = mant * 2^exp => m = mant * 2^(exp+9) = mant * 2^(biased_exp+3) */
+        int mant_bits = (int)(mant * (float)(1 << (biased_exp + 3)));
+        if (mant_bits > 7) mant_bits = 7;
+        return (int8_t)(sign | mant_bits);
+    }
+    if (biased_exp > 15) {
+        /* Saturate to max finite value */
+        return (int8_t)(sign | 0x7F);
+    }
+    /* For normal: m = 8 * (mant * 2 - 1) = 16 * mant - 8,
+     * so (int)(16*mant) & 7 gives the same result since subtracting 8 cancels in lower 3 bits */
+    int mant_bits = ((int)(mant * 16.0f)) & 0x7;
+    return (int8_t)(sign | (biased_exp << 3) | mant_bits);
+}
+
+/* FP8 E4M3 decode */
+static float fp8e4m3_decode(int8_t x) {
+    if (x == 0) return 0.0f;
+    int sign = (x < 0) ? -1 : 1;
+    int val = x & 0x7F;
+    int biased_exp = (val >> 3) & 0x1F;
+    int mantissa = val & 0x07;
+    if (biased_exp == 0) {
+        return sign * ldexpf((float)mantissa, -9);
+    }
+    return sign * ldexpf((float)(mantissa + 8), biased_exp - 10);
 }
 
 /* Nearest centroid for TQ3 (8 centroids) */
@@ -1022,6 +1197,387 @@ size_t quantize_tq4_1s(const float * GGML_RESTRICT src, void * GGML_RESTRICT dst
             (block_tq4_1s *)((char *)dst + row * row_size),
             n_per_row
         );
+    }
+    return nrows * row_size;
+}
+
+
+/* ================================================================ */
+/* TQ3_1S-PS: WHT-rotated 3-bit with 4-way PS sign pattern search   */
+/* ================================================================ */
+
+void quantize_row_tq3_1s_ps_ref(const float * GGML_RESTRICT x, block_tq3_1s * GGML_RESTRICT y, int64_t k) {
+    assert(k % QK_TQ3_0 == 0);
+    const int nb = k / QK_TQ3_0;
+
+    for (int block = 0; block < nb; block++) {
+        const float * src_blk = x + block * QK_TQ3_0;
+        block_tq3_1s * blk = &y[block];
+
+        float best_d0 = 0.0f, best_d1 = 0.0f;
+        float best_err = 1e30f;
+        int best_pat = 0;
+        uint8_t best_indices[32];
+
+        for (int pat = 0; pat < 16; pat++) {
+            float buf[32];
+            memcpy(buf, src_blk, 32 * sizeof(float));
+            tq3_0_rht_forward_ps(buf, TQ3_0_SIGNS_PS[pat]);
+
+            float rms0 = 0.0f, rms1 = 0.0f;
+            for (int j = 0; j < 16; j++) rms0 += buf[j] * buf[j];
+            for (int j = 16; j < 32; j++) rms1 += buf[j] * buf[j];
+            rms0 = sqrtf(rms0 / 16.0f);
+            rms1 = sqrtf(rms1 / 16.0f);
+
+            static const float scales[] = { 0.6f, 0.7f, 0.8f, 0.9f, 1.0f, 1.1f, 1.2f, 1.35f, 1.5f };
+            float pat_best_d0 = rms0, pat_best_d1 = rms1;
+            float pat_best_err = 1e30f;
+            uint8_t pat_best_idx[32];
+            memset(pat_best_idx, 0, 32);  /* initialize to silence compiler warning */
+
+            for (int si = 0; si < 9; si++) {
+                float d0 = rms0 * scales[si];
+                float d1 = rms1 * scales[si];
+                float inv0 = (d0 > 1e-10f) ? 1.0f / d0 : 0.0f;
+                float inv1 = (d1 > 1e-10f) ? 1.0f / d1 : 0.0f;
+                float err = 0.0f;
+                uint8_t idx[32];
+                for (int j = 0; j < 16; j++) {
+                    idx[j] = (uint8_t)tq3_0_choose_index(buf[j] * inv0);
+                    float diff = buf[j] - TQ3_0_CENTROIDS[idx[j]] * d0;
+                    err += diff * diff;
+                }
+                for (int j = 16; j < 32; j++) {
+                    idx[j] = (uint8_t)tq3_0_choose_index(buf[j] * inv1);
+                    float diff = buf[j] - TQ3_0_CENTROIDS[idx[j]] * d1;
+                    err += diff * diff;
+                }
+                if (err < pat_best_err) {
+                    pat_best_err = err;
+                    pat_best_d0 = d0;
+                    pat_best_d1 = d1;
+                    memcpy(pat_best_idx, idx, 32);
+                }
+            }
+
+            for (int iter = 0; iter < 6; iter++) {
+                float inv0 = (pat_best_d0 > 1e-10f) ? 1.0f / pat_best_d0 : 0.0f;
+                float inv1 = (pat_best_d1 > 1e-10f) ? 1.0f / pat_best_d1 : 0.0f;
+                float num0 = 0.0f, den0 = 0.0f, num1 = 0.0f, den1 = 0.0f;
+                for (int j = 0; j < 16; j++) {
+                    int idx = tq3_0_choose_index(buf[j] * inv0);
+                    float c = TQ3_0_CENTROIDS[idx];
+                    num0 += buf[j] * c; den0 += c * c;
+                }
+                for (int j = 16; j < 32; j++) {
+                    int idx = tq3_0_choose_index(buf[j] * inv1);
+                    float c = TQ3_0_CENTROIDS[idx];
+                    num1 += buf[j] * c; den1 += c * c;
+                }
+                if (den0 > 1e-10f) pat_best_d0 = num0 / den0;
+                if (den1 > 1e-10f) pat_best_d1 = num1 / den1;
+            }
+
+            if (pat_best_err < best_err) {
+                best_err = pat_best_err;
+                best_d0 = pat_best_d0;
+                best_d1 = pat_best_d1;
+                best_pat = pat;
+                memcpy(best_indices, pat_best_idx, 32);
+            }
+        }
+
+        /* Encode pattern index (4 bits) in d0[0:1], d1[0:1] of FP16 scales */
+        ggml_fp16_t d0_fp16 = GGML_FP32_TO_FP16(best_d0);
+        ggml_fp16_t d1_fp16 = GGML_FP32_TO_FP16(best_d1);
+        uint16_t d0_bits = (uint16_t)d0_fp16;
+        uint16_t d1_bits = (uint16_t)d1_fp16;
+        d0_bits = (d0_bits & ~(uint16_t)3) | ((uint16_t)(best_pat & 3));
+        d1_bits = (d1_bits & ~(uint16_t)3) | ((uint16_t)((best_pat >> 2) & 3));
+        blk->d0 = (ggml_fp16_t)d0_bits;
+        blk->d1 = (ggml_fp16_t)d1_bits;
+
+        memset(blk->qs, 0, QK_TQ3_0 * 3 / 8);
+        for (int g = 0; g < 4; g++) {
+            uint8_t * qp = blk->qs + g * 3;
+            qp[0] = (best_indices[g*8] & 7) | ((best_indices[g*8+1] & 7) << 3) | ((best_indices[g*8+2] & 3) << 6);
+            qp[1] = ((best_indices[g*8+2] >> 2) & 1) | ((best_indices[g*8+3] & 7) << 1) | ((best_indices[g*8+4] & 7) << 4) | ((best_indices[g*8+5] & 1) << 7);
+            qp[2] = ((best_indices[g*8+5] >> 1) & 3) | ((best_indices[g*8+6] & 7) << 2) | ((best_indices[g*8+7] & 7) << 5);
+        }
+    }
+}
+
+void dequantize_row_tq3_1s_ps(const block_tq3_1s * GGML_RESTRICT x, float * GGML_RESTRICT y, int64_t k) {
+    assert(k % QK_TQ3_0 == 0);
+    const int nb = k / QK_TQ3_0;
+
+    for (int blk_i = 0; blk_i < nb; blk_i++) {
+        uint16_t d0_bits = (uint16_t)x[blk_i].d0;
+        uint16_t d1_bits = (uint16_t)x[blk_i].d1;
+        int pat = (int)((d0_bits & 3) | ((d1_bits & 3) << 2));
+        ggml_fp16_t d0_clean = (ggml_fp16_t)(d0_bits & ~(uint16_t)3);
+        ggml_fp16_t d1_clean = (ggml_fp16_t)(d1_bits & ~(uint16_t)3);
+        float d0 = GGML_FP16_TO_FP32(d0_clean);
+        float d1 = GGML_FP16_TO_FP32(d1_clean);
+
+        float buf[32];
+        for (int g = 0; g < 4; g++) {
+            const uint8_t * qp = x[blk_i].qs + g * 3;
+            uint8_t idx[8];
+            idx[0] =  qp[0]       & 7;
+            idx[1] = (qp[0] >> 3) & 7;
+            idx[2] = ((qp[0] >> 6) | (qp[1] << 2)) & 7;
+            idx[3] = (qp[1] >> 1) & 7;
+            idx[4] = (qp[1] >> 4) & 7;
+            idx[5] = ((qp[1] >> 7) | (qp[2] << 1)) & 7;
+            idx[6] = (qp[2] >> 2) & 7;
+            idx[7] = (qp[2] >> 5) & 7;
+            for (int i = 0; i < 8; i++) {
+                int j = g * 8 + i;
+                buf[j] = TQ3_0_CENTROIDS[idx[i]] * ((j < 16) ? d0 : d1);
+            }
+        }
+
+        tq3_0_rht_inverse_ps(buf, TQ3_0_SIGNS_PS[pat]);
+        memcpy(y + blk_i * QK_TQ3_0, buf, QK_TQ3_0 * sizeof(float));
+    }
+}size_t quantize_tq3_1s_ps(const float * GGML_RESTRICT src, void * GGML_RESTRICT dst,
+        int64_t nrows, int64_t n_per_row, const float * imatrix) {
+    GGML_UNUSED(imatrix);
+    assert(n_per_row % QK_TQ3_0 == 0);
+    size_t row_size = (n_per_row / QK_TQ3_0) * sizeof(block_tq3_1s);
+    for (int64_t row = 0; row < nrows; row++) {
+        quantize_row_tq3_1s_ps_ref(
+            src + row * n_per_row,
+            (block_tq3_1s *)((char *)dst + row * row_size),
+            n_per_row);
+    }
+    return nrows * row_size;
+}
+
+/* ================================================================ */
+/* TQ3_1S-RIM: 3-bit with Iterative Refinement + Importance Matrix  */
+/* ================================================================ */
+
+void quantize_row_tq3_1s_rim_ref(const float * GGML_RESTRICT x, block_tq3_1s * GGML_RESTRICT y, int64_t k) {
+    assert(k % QK_TQ3_0 == 0);
+    const int nb = k / QK_TQ3_0;
+
+    for (int block = 0; block < nb; block++) {
+        const float * src_blk = x + block * QK_TQ3_0;
+        block_tq3_1s * blk = &y[block];
+
+        float buf[TQ_BLOCK_SIZE];
+        memcpy(buf, src_blk, TQ_BLOCK_SIZE * sizeof(float));
+        tq3_0_rht_forward(buf);
+
+        float rms0 = 0.0f, rms1 = 0.0f;
+        for (int j = 0; j < 16; j++) rms0 += buf[j] * buf[j];
+        for (int j = 16; j < 32; j++) rms1 += buf[j] * buf[j];
+        rms0 = sqrtf(rms0 / 16.0f);
+        rms1 = sqrtf(rms1 / 16.0f);
+
+        float best_d0 = rms0, best_d1 = rms1;
+        float best_err = 1e30f;
+        static const float scales[] = { 0.6f, 0.7f, 0.8f, 0.9f, 1.0f, 1.1f, 1.2f, 1.35f, 1.5f };
+        for (int si = 0; si < 9; si++) {
+            float d0 = rms0 * scales[si];
+            float d1 = rms1 * scales[si];
+            float inv0 = (d0 > 1e-10f) ? 1.0f / d0 : 0.0f;
+            float inv1 = (d1 > 1e-10f) ? 1.0f / d1 : 0.0f;
+            float err = 0.0f;
+            for (int j = 0; j < 16; j++) {
+                int idx = tq3_0_choose_index(buf[j] * inv0);
+                float diff = buf[j] - TQ3_0_CENTROIDS[idx] * d0;
+                err += diff * diff;
+            }
+            for (int j = 16; j < 32; j++) {
+                int idx = tq3_0_choose_index(buf[j] * inv1);
+                float diff = buf[j] - TQ3_0_CENTROIDS[idx] * d1;
+                err += diff * diff;
+            }
+            if (err < best_err) { best_err = err; best_d0 = d0; best_d1 = d1; }
+        }
+
+        for (int iter = 0; iter < 8; iter++) {
+            float inv0 = (best_d0 > 1e-10f) ? 1.0f / best_d0 : 0.0f;
+            float inv1 = (best_d1 > 1e-10f) ? 1.0f / best_d1 : 0.0f;
+            float num0 = 0.0f, den0 = 0.0f, num1 = 0.0f, den1 = 0.0f;
+            for (int j = 0; j < 16; j++) {
+                int idx = tq3_0_choose_index(buf[j] * inv0);
+                float c = TQ3_0_CENTROIDS[idx];
+                num0 += buf[j] * c; den0 += c * c;
+            }
+            for (int j = 16; j < 32; j++) {
+                int idx = tq3_0_choose_index(buf[j] * inv1);
+                float c = TQ3_0_CENTROIDS[idx];
+                num1 += buf[j] * c; den1 += c * c;
+            }
+            if (den0 > 1e-10f) best_d0 = num0 / den0;
+            if (den1 > 1e-10f) best_d1 = num1 / den1;
+        }
+
+        float inv0 = (best_d0 > 1e-10f) ? 1.0f / best_d0 : 0.0f;
+        float inv1 = (best_d1 > 1e-10f) ? 1.0f / best_d1 : 0.0f;
+        blk->d0 = GGML_FP32_TO_FP16(best_d0);
+        blk->d1 = GGML_FP32_TO_FP16(best_d1);
+        memset(blk->qs, 0, QK_TQ3_0 * 3 / 8);
+        for (int g = 0; g < 4; g++) {
+            uint8_t indices[8];
+            for (int i = 0; i < 8; i++) {
+                int j = g * 8 + i;
+                indices[i] = (uint8_t)tq3_0_choose_index(buf[j] * ((j < 16) ? inv0 : inv1));
+            }
+            uint8_t * qp = blk->qs + g * 3;
+            qp[0] = (indices[0] & 7) | ((indices[1] & 7) << 3) | ((indices[2] & 3) << 6);
+            qp[1] = ((indices[2] >> 2) & 1) | ((indices[3] & 7) << 1) | ((indices[4] & 7) << 4) | ((indices[5] & 1) << 7);
+            qp[2] = ((indices[5] >> 1) & 3) | ((indices[6] & 7) << 2) | ((indices[7] & 7) << 5);
+        }
+    }
+}
+
+size_t quantize_tq3_1s_rim(const float * GGML_RESTRICT src, void * GGML_RESTRICT dst,
+                            int64_t nrows, int64_t n_per_row, const float * imatrix) {
+    assert(n_per_row % QK_TQ3_0 == 0);
+    size_t row_size = (n_per_row / QK_TQ3_0) * sizeof(block_tq3_1s);
+    GGML_UNUSED(imatrix);
+    for (int64_t row = 0; row < nrows; row++) {
+        quantize_row_tq3_1s_rim_ref(
+            src + row * n_per_row,
+            (block_tq3_1s *)((char *)dst + row * row_size),
+            n_per_row);
+    }
+    return nrows * row_size;
+}
+
+size_t quantize_tq3_1s_rim_stats(const float * GGML_RESTRICT src, void * GGML_RESTRICT dst,
+                                  int64_t nrows, int64_t n_per_row, const float * imatrix,
+                                  rim_stats_t * stats) {
+    GGML_UNUSED(stats);
+    return quantize_tq3_1s_rim(src, dst, nrows, n_per_row, imatrix);
+}
+
+/* ================================================================ */
+/* TQ3_4S: WHT-rotated 3-bit with 4 FP8 E4M3 sub-block scales      */
+/* ================================================================ */
+
+void quantize_row_tq3_4s_ref(const float * GGML_RESTRICT x, block_tq3_4s * GGML_RESTRICT y, int64_t k) {
+    assert(k % QK_TQ3_4S == 0);
+    const int nb = k / QK_TQ3_4S;
+
+    for (int block = 0; block < nb; block++) {
+        const float * src_blk = x + block * QK_TQ3_4S;
+        block_tq3_4s * blk = &y[block];
+
+        float buf[TQ_BLOCK_SIZE];
+        memcpy(buf, src_blk, TQ_BLOCK_SIZE * sizeof(float));
+        tq3_0_rht_forward(buf);
+
+        float ds[4];
+        for (int s = 0; s < 4; s++) {
+            float sum_sq = 0.0f;
+            for (int i = 0; i < 8; i++) sum_sq += buf[s * 8 + i] * buf[s * 8 + i];
+            ds[s] = sqrtf(sum_sq / 8.0f);
+            if (ds[s] < 1e-10f) ds[s] = 1e-10f;
+        }
+
+        static const float scales[] = { 0.6f, 0.7f, 0.8f, 0.9f, 1.0f, 1.1f, 1.2f, 1.35f, 1.5f };
+        float best_ds[4];
+        memcpy(best_ds, ds, 4 * sizeof(float));
+        float best_err = 1e30f;
+        uint8_t best_indices[32];
+
+        for (int si = 0; si < 9; si++) {
+            float test_ds[4];
+            for (int s = 0; s < 4; s++) test_ds[s] = ds[s] * scales[si];
+            float inv[4];
+            for (int s = 0; s < 4; s++) inv[s] = 1.0f / test_ds[s];
+            float err = 0.0f;
+            uint8_t idx[32];
+            for (int j = 0; j < 32; j++) {
+                int s = j / 8;
+                idx[j] = (uint8_t)tq3_0_choose_index(buf[j] * inv[s]);
+                float diff = buf[j] - TQ3_0_CENTROIDS[idx[j]] * test_ds[s];
+                err += diff * diff;
+            }
+            if (err < best_err) {
+                best_err = err;
+                memcpy(best_ds, test_ds, 4 * sizeof(float));
+                memcpy(best_indices, idx, 32);
+            }
+        }
+
+        for (int iter = 0; iter < 6; iter++) {
+            float inv[4];
+            for (int s = 0; s < 4; s++) inv[s] = 1.0f / best_ds[s];
+            for (int s = 0; s < 4; s++) {
+                float num = 0.0f, den = 0.0f;
+                for (int i = 0; i < 8; i++) {
+                    int j = s * 8 + i;
+                    int idx = tq3_0_choose_index(buf[j] * inv[s]);
+                    float c = TQ3_0_CENTROIDS[idx];
+                    num += buf[j] * c; den += c * c;
+                }
+                if (den > 1e-10f) best_ds[s] = num / den;
+            }
+            for (int s = 0; s < 4; s++) inv[s] = 1.0f / best_ds[s];
+            for (int j = 0; j < 32; j++) best_indices[j] = (uint8_t)tq3_0_choose_index(buf[j] * inv[j / 8]);
+        }
+
+        for (int s = 0; s < 4; s++) blk->ds[s] = fp8e4m3_encode(best_ds[s]);
+
+        memset(blk->qs, 0, QK_TQ3_4S * 3 / 8);
+        for (int g = 0; g < 4; g++) {
+            uint8_t * qp = blk->qs + g * 3;
+            qp[0] = (best_indices[g*8] & 7) | ((best_indices[g*8+1] & 7) << 3) | ((best_indices[g*8+2] & 3) << 6);
+            qp[1] = ((best_indices[g*8+2] >> 2) & 1) | ((best_indices[g*8+3] & 7) << 1) | ((best_indices[g*8+4] & 7) << 4) | ((best_indices[g*8+5] & 1) << 7);
+            qp[2] = ((best_indices[g*8+5] >> 1) & 3) | ((best_indices[g*8+6] & 7) << 2) | ((best_indices[g*8+7] & 7) << 5);
+        }
+    }
+}
+
+void dequantize_row_tq3_4s(const block_tq3_4s * GGML_RESTRICT x, float * GGML_RESTRICT y, int64_t k) {
+    assert(k % QK_TQ3_4S == 0);
+    const int nb = k / QK_TQ3_4S;
+
+    for (int blk_i = 0; blk_i < nb; blk_i++) {
+        float ds[4];
+        for (int s = 0; s < 4; s++) ds[s] = fp8e4m3_decode(x[blk_i].ds[s]);
+
+        float buf[32];
+        for (int g = 0; g < 4; g++) {
+            const uint8_t * qp = x[blk_i].qs + g * 3;
+            uint8_t idx[8];
+            idx[0] =  qp[0]       & 7;
+            idx[1] = (qp[0] >> 3) & 7;
+            idx[2] = ((qp[0] >> 6) | (qp[1] << 2)) & 7;
+            idx[3] = (qp[1] >> 1) & 7;
+            idx[4] = (qp[1] >> 4) & 7;
+            idx[5] = ((qp[1] >> 7) | (qp[2] << 1)) & 7;
+            idx[6] = (qp[2] >> 2) & 7;
+            idx[7] = (qp[2] >> 5) & 7;
+            for (int i = 0; i < 8; i++) {
+                int j = g * 8 + i;
+                buf[j] = TQ3_0_CENTROIDS[idx[i]] * ds[j / 8];
+            }
+        }
+
+        tq3_0_rht_inverse(buf);
+        memcpy(y + blk_i * QK_TQ3_4S, buf, QK_TQ3_4S * sizeof(float));
+    }
+}
+
+size_t quantize_tq3_4s(const float * GGML_RESTRICT src, void * GGML_RESTRICT dst,
+                        int64_t nrows, int64_t n_per_row, const float * imatrix) {
+    GGML_UNUSED(imatrix);
+    assert(n_per_row % QK_TQ3_4S == 0);
+    size_t row_size = (n_per_row / QK_TQ3_4S) * sizeof(block_tq3_4s);
+    for (int64_t row = 0; row < nrows; row++) {
+        quantize_row_tq3_4s_ref(
+            src + row * n_per_row,
+            (block_tq3_4s *)((char *)dst + row * row_size),
+            n_per_row);
     }
     return nrows * row_size;
 }

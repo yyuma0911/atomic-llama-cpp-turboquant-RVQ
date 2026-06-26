@@ -123,6 +123,30 @@ GGML_API void quantize_row_tq4_1s_ref(const float * GGML_RESTRICT x, block_tq4_1
 GGML_API void dequantize_row_tq4_1s(const block_tq4_1s * GGML_RESTRICT x, float * GGML_RESTRICT y, int64_t k);
 GGML_API size_t quantize_tq4_1s(const float * GGML_RESTRICT src, void * GGML_RESTRICT dst, int64_t nrows, int64_t n_per_row, const float * imatrix);
 
+// TQ3_1S-PS: TQ3_1S with 4-way WHT sign pattern search (Pattern Selection)
+GGML_API void quantize_row_tq3_1s_ps_ref(const float * GGML_RESTRICT x, block_tq3_1s * GGML_RESTRICT y, int64_t k);
+GGML_API void dequantize_row_tq3_1s_ps(const block_tq3_1s * GGML_RESTRICT x, float * GGML_RESTRICT y, int64_t k);
+GGML_API size_t quantize_tq3_1s_ps(const float * GGML_RESTRICT src, void * GGML_RESTRICT dst, int64_t nrows, int64_t n_per_row, const float * imatrix);
+
+// TQ3_1S-PS-DDS: TQ3_1S with 8-way data-dependent WHT sign pattern search (Data-Dependent Seed)
+// TQ3_1S-RIM: TQ3_1S with Iterative Refinement (IR) + Importance Matrix (IM)
+typedef struct {
+    int total_blocks;
+    int total_iters;
+    int max_iters_used;
+    int min_iters_used;
+    float sum_mse_improve;
+} rim_stats_t;
+
+GGML_API void quantize_row_tq3_1s_rim_ref(const float * GGML_RESTRICT x, block_tq3_1s * GGML_RESTRICT y, int64_t k);
+GGML_API size_t quantize_tq3_1s_rim(const float * GGML_RESTRICT src, void * GGML_RESTRICT dst, int64_t nrows, int64_t n_per_row, const float * imatrix);
+GGML_API size_t quantize_tq3_1s_rim_stats(const float * GGML_RESTRICT src, void * GGML_RESTRICT dst, int64_t nrows, int64_t n_per_row, const float * imatrix, rim_stats_t * stats);
+
+// TQ3_4S: WHT-rotated 3-bit with 4 FP8 E4M3 sub-block scales
+GGML_API void quantize_row_tq3_4s_ref(const float * GGML_RESTRICT x, block_tq3_4s * GGML_RESTRICT y, int64_t k);
+GGML_API void dequantize_row_tq3_4s(const block_tq3_4s * GGML_RESTRICT x, float * GGML_RESTRICT y, int64_t k);
+GGML_API size_t quantize_tq3_4s(const float * GGML_RESTRICT src, void * GGML_RESTRICT dst, int64_t nrows, int64_t n_per_row, const float * imatrix);
+
 // TQ3_RVQ: Residual Vector Quantization for 3-bit weights
 GGML_API void quantize_row_tq3_rvq_ref(const float * GGML_RESTRICT x, block_tq3_rvq * GGML_RESTRICT y, int64_t k);
 GGML_API void dequantize_row_tq3_rvq(const block_tq3_rvq * GGML_RESTRICT x, float * GGML_RESTRICT y, int64_t k);

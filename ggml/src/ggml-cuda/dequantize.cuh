@@ -259,3 +259,135 @@ static __device__ __forceinline__ void dequantize_tq3_1s(const void * vx, const 
     v.x = buf[iqs];
     v.y = buf[iqs + 1];
 }
+
+
+// TQ3_1S_PS: same block_tq3_1s format as TQ3_1S, with pattern index encoded in d0[0:1], d1[0:1].
+// Dequant: extract pattern → clean d0/d1 LSBs → centroid lookup → inverse RHT with correct signs.
+// Pattern encoding: bit0=d0[0], bit1=d0[1], bit2=d1[0], bit3=d1[1] — supports 16 patterns (0..15).
+static __device__ __forceinline__ void dequantize_tq3_1s_ps(const void * vx, const int64_t ib, const int iqs, float2 & v) {
+    const block_tq3_1s * x = (const block_tq3_1s *) vx;
+    // Safe bit extraction from __half (struct on ROCm/HIP) via memcpy to avoid UB
+    uint16_t d0_raw, d1_raw;
+    memcpy(&d0_raw, &x[ib].d0, sizeof(uint16_t));
+    memcpy(&d1_raw, &x[ib].d1, sizeof(uint16_t));
+    const int pattern = (int)((d0_raw & 3) | ((d1_raw & 3) << 2));
+    const uint16_t d0_clean = d0_raw & ~(uint16_t)3;
+    const uint16_t d1_clean = d1_raw & ~(uint16_t)3;
+    half d0_h, d1_h;
+    memcpy(&d0_h, &d0_clean, sizeof(uint16_t));
+    memcpy(&d1_h, &d1_clean, sizeof(uint16_t));
+    float d0 = __half2float(d0_h);
+    float d1 = __half2float(d1_h);
+
+    const float * signs;
+    switch (pattern) {
+        case 1: signs = TQ_WEIGHT_SIGNS_PS1; break;
+        case 2: signs = TQ_WEIGHT_SIGNS_PS2; break;
+        case 3: signs = TQ_WEIGHT_SIGNS_PS3; break;
+        case 4: signs = TQ_WEIGHT_SIGNS_PS4; break;
+        case 5: signs = TQ_WEIGHT_SIGNS_PS5; break;
+        case 6: signs = TQ_WEIGHT_SIGNS_PS6; break;
+        case 7: signs = TQ_WEIGHT_SIGNS_PS7; break;
+        case 8: signs = TQ_WEIGHT_SIGNS_PS8; break;
+        case 9: signs = TQ_WEIGHT_SIGNS_PS9; break;
+        case 10: signs = TQ_WEIGHT_SIGNS_PS10; break;
+        case 11: signs = TQ_WEIGHT_SIGNS_PS11; break;
+        case 12: signs = TQ_WEIGHT_SIGNS_PS12; break;
+        case 13: signs = TQ_WEIGHT_SIGNS_PS13; break;
+        case 14: signs = TQ_WEIGHT_SIGNS_PS14; break;
+        case 15: signs = TQ_WEIGHT_SIGNS_PS15; break;
+        default: signs = TQ_WEIGHT_SIGNS; break;
+    }
+
+    float buf[32];
+    for (int g = 0; g < 4; g++) {
+        const uint8_t * qp = x[ib].qs + g * 3;
+        uint8_t idx[8];
+        idx[0] =  qp[0]       & 7;
+        idx[1] = (qp[0] >> 3) & 7;
+        idx[2] = ((qp[0] >> 6) | (qp[1] << 2)) & 7;
+        idx[3] = (qp[1] >> 1) & 7;
+        idx[4] = (qp[1] >> 4) & 7;
+        idx[5] = ((qp[1] >> 7) | (qp[2] << 1)) & 7;
+        idx[6] = (qp[2] >> 2) & 7;
+        idx[7] = (qp[2] >> 5) & 7;
+
+        for (int i = 0; i < 8; i++) {
+            int j = g * 8 + i;
+            float d = (j < 16) ? d0 : d1;
+            buf[j] = TQ3_CENTROIDS_WEIGHT[idx[i]] * d;
+        }
+    }
+
+    // Inverse RHT with pattern-specific signs
+    for (int step = 1; step < 32; step <<= 1) {
+        for (int i = 0; i < 32; i += step << 1) {
+            for (int j = i; j < i + step; j++) {
+                float a = buf[j], b = buf[j + step];
+                buf[j] = a + b; buf[j + step] = a - b;
+            }
+        }
+    }
+    const float inv_sqrt32 = 0.17677669529663688f;
+    for (int j = 0; j < 32; j++) buf[j] *= inv_sqrt32 * signs[j];
+
+    v.x = buf[iqs];
+    v.y = buf[iqs + 1];
+}
+
+
+
+// FP8 E4M3 decode (device-side)
+static __device__ __forceinline__ float fp8e4m3_decode_gpu(int8_t x) {
+    if (x == 0) return 0.0f;
+    int sign = (x < 0) ? -1 : 1;
+    int val = x & 0x7F;
+    int biased_exp = (val >> 3) & 0x1F;
+    int mantissa = val & 0x07;
+    if (biased_exp == 0) {
+        return sign * ldexpf((float)mantissa, -9);
+    }
+    return sign * ldexpf((float)(mantissa + 8), biased_exp - 10);
+}
+
+// TQ3_4S: 3-bit weight type with inverse WHT, block size 32, quad FP8 E4M3 sub-block scales
+static __device__ __forceinline__ void dequantize_tq3_4s(const void * vx, const int64_t ib, const int iqs, float2 & v) {
+    const block_tq3_4s * x = (const block_tq3_4s *) vx;
+
+    float ds[4];
+    for (int s = 0; s < 4; s++) ds[s] = fp8e4m3_decode_gpu(x[ib].ds[s]);
+
+    float buf[32];
+    for (int g = 0; g < 4; g++) {
+        const uint8_t * qp = x[ib].qs + g * 3;
+        uint8_t idx[8];
+        idx[0] =  qp[0]       & 7;
+        idx[1] = (qp[0] >> 3) & 7;
+        idx[2] = ((qp[0] >> 6) | (qp[1] << 2)) & 7;
+        idx[3] = (qp[1] >> 1) & 7;
+        idx[4] = (qp[1] >> 4) & 7;
+        idx[5] = ((qp[1] >> 7) | (qp[2] << 1)) & 7;
+        idx[6] = (qp[2] >> 2) & 7;
+        idx[7] = (qp[2] >> 5) & 7;
+
+        for (int i = 0; i < 8; i++) {
+            int j = g * 8 + i;
+            float d = ds[j / 8];
+            buf[j] = TQ3_CENTROIDS_WEIGHT[idx[i]] * d;
+        }
+    }
+
+    for (int step = 1; step < 32; step <<= 1) {
+        for (int i = 0; i < 32; i += step << 1) {
+            for (int j = i; j < i + step; j++) {
+                float a = buf[j], b = buf[j + step];
+                buf[j] = a + b; buf[j + step] = a - b;
+            }
+        }
+    }
+    const float inv_sqrt32 = 0.17677669529663688f;
+    for (int j = 0; j < 32; j++) buf[j] *= inv_sqrt32 * TQ_WEIGHT_SIGNS[j];
+
+    v.x = buf[iqs];
+    v.y = buf[iqs + 1];
+}

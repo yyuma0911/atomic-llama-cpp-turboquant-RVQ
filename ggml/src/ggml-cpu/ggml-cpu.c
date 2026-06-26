@@ -218,6 +218,9 @@ static void ggml_vec_dot_turbo4_0_f32(int n, float * GGML_RESTRICT s, size_t bs,
 static void ggml_vec_dot_tq3_1s_q8_0(int n, float * GGML_RESTRICT s, size_t bs,
                                        const void * GGML_RESTRICT vx, size_t bx,
                                        const void * GGML_RESTRICT vy, size_t by, int nrc);
+static void ggml_vec_dot_tq3_1s_ps_q8_0(int n, float * GGML_RESTRICT s, size_t bs,
+                                       const void * GGML_RESTRICT vx, size_t bx,
+                                       const void * GGML_RESTRICT vy, size_t by, int nrc);
   static void ggml_vec_dot_tq4_1s_q8_0(int n, float * GGML_RESTRICT s, size_t bs,
                                        const void * GGML_RESTRICT vx, size_t bx,
                                        const void * GGML_RESTRICT vy, size_t by, int nrc);
@@ -456,6 +459,19 @@ static const struct ggml_type_traits_cpu type_traits_cpu[GGML_TYPE_COUNT] = {
         .vec_dot_type             = GGML_TYPE_Q8_0,
         .nrows                    = 1,
     },
+    [GGML_TYPE_TQ3_1S_RIM] = {
+        .from_float               = (ggml_from_float_t) quantize_row_tq3_1s_rim_ref,
+        .vec_dot                  = (ggml_vec_dot_t) ggml_vec_dot_tq3_1s_q8_0,
+        .vec_dot_type             = GGML_TYPE_Q8_0,
+        .nrows                    = 1,
+    },
+    [GGML_TYPE_TQ3_1S_PS] = {
+        .from_float               = (ggml_from_float_t) quantize_row_tq3_1s_ps_ref,
+        .vec_dot                  = (ggml_vec_dot_t) ggml_vec_dot_tq3_1s_ps_q8_0,
+        .vec_dot_type             = GGML_TYPE_Q8_0,
+        .nrows                    = 1,
+    },
+
 };
 
 const struct ggml_type_traits_cpu * ggml_get_type_traits_cpu(enum ggml_type type) {
@@ -3462,6 +3478,30 @@ static void ggml_vec_dot_tq3_1s_q8_0(int n, float * GGML_RESTRICT s, size_t bs,
     ggml_get_type_traits(GGML_TYPE_TQ3_1S)->to_float(vx, tmp, n);
 
     // Dequantize q8_0 and dot
+    float * tmp2 = (float *)malloc(n * sizeof(float));
+    GGML_ASSERT(tmp2 != NULL);
+    ggml_get_type_traits(GGML_TYPE_Q8_0)->to_float(vy, tmp2, n);
+
+    float sum = 0.0f;
+    for (int i = 0; i < n; i++) {
+        sum += tmp[i] * tmp2[i];
+    }
+    free(tmp);
+    free(tmp2);
+    *s = sum;
+}
+
+// TQ3_1S-PS vec_dot: dequantize with PS pattern-aware inverse RHT, then dot with q8_0.
+static void ggml_vec_dot_tq3_1s_ps_q8_0(int n, float * GGML_RESTRICT s, size_t bs,
+                                       const void * GGML_RESTRICT vx, size_t bx,
+                                       const void * GGML_RESTRICT vy, size_t by, int nrc) {
+    GGML_ASSERT(nrc == 1);
+    GGML_UNUSED(bs); GGML_UNUSED(bx); GGML_UNUSED(by); GGML_UNUSED(nrc);
+
+    float * tmp = (float *)malloc(n * sizeof(float));
+    GGML_ASSERT(tmp != NULL);
+    dequantize_row_tq3_1s_ps((const block_tq3_1s *)vx, tmp, n);
+
     float * tmp2 = (float *)malloc(n * sizeof(float));
     GGML_ASSERT(tmp2 != NULL);
     ggml_get_type_traits(GGML_TYPE_Q8_0)->to_float(vy, tmp2, n);
