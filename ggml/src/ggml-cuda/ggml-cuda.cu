@@ -1981,19 +1981,20 @@ static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor
     // TQ weight types use the fused dp4a path (all batch sizes), not mmvq/mmq
     const bool is_tq_weight = (src0->type == GGML_TYPE_TQ4_1S || src0->type == GGML_TYPE_TQ3_1S);
     if (is_tq_weight) {
-        if (src1->ne[1] <= MMVQ_MAX_BATCH_SIZE) {
-            // Fused TQ weight mul_mat with pre-rotated activations via warp shuffle WHT
-            // Handles ne[1]=1 (decode) and ne[1]<=8 (multi-token / speculative decoding)
-            ggml_cuda_mul_mat_tq(ctx, src0, src1, dst);
-            return;
-        }
         if (src0->type == GGML_TYPE_TQ4_1S) {
+            if (src1->ne[1] <= MMVQ_MAX_BATCH_SIZE) {
+                // Fused TQ4_1S weight mul_mat with pre-rotated activations via warp shuffle WHT
+                // Handles ne[1]=1 (decode) and ne[1]<=8 (multi-token / speculative decoding)
+                ggml_cuda_mul_mat_tq(ctx, src0, src1, dst);
+                return;
+            }
             // Large prefill: runtime TQ4_1S -> q8_0 scratch conversion + cuBLAS
             // Gets tensor core throughput without permanent 1.7x VRAM cost
             ggml_cuda_mul_mat_tq4_1s_cublas(ctx, src0, src1, dst);
             return;
         }
-        // TQ3_1S large batch: dequant + cuBLAS via the generic fallback below
+        // TQ3_1S: per-block sign patterns (index in d0 low bits), the fused
+        // pre-rotated path assumes one pattern per row -> always dequant + cuBLAS
         ggml_cuda_mul_mat_cublas(ctx, src0, src1, dst);
         return;
     }

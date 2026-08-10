@@ -181,7 +181,9 @@ static __device__ __forceinline__ void dequantize_tq4_1s(const void * vx, const 
 // 3-bit packing: 4 groups of 8 indices in 3 bytes each (24 bits = 8 * 3-bit)
 static __device__ __forceinline__ void dequantize_tq3_1s(const void * vx, const int64_t ib, const int iqs, float2 & v) {
     const block_tq3_1s * x = (const block_tq3_1s *) vx;
-    const float d0 = __half2float(x[ib].d0);
+    const uint16_t d0raw = __half_as_ushort(x[ib].d0);
+    const int pat = (int)(d0raw & 0x3u); // sign pattern index in d0 low bits
+    const float d0 = __half2float(__ushort_as_half((uint16_t)(d0raw & 0xFFFCu)));
     const float d1 = __half2float(x[ib].d1);
 
     // Unpack all 32 3-bit indices (4 groups of 8 in 3 bytes)
@@ -215,7 +217,8 @@ static __device__ __forceinline__ void dequantize_tq3_1s(const void * vx, const 
         }
     }
     const float inv_sqrt32 = 0.17677669529663688f;
-    for (int j = 0; j < 32; j++) buf[j] *= inv_sqrt32 * TQ_WEIGHT_SIGNS[j];
+    const float * signs = TQ3_1S_SIGN_POOL[pat];
+    for (int j = 0; j < 32; j++) buf[j] *= inv_sqrt32 * signs[j];
 
     v.x = buf[iqs];
     v.y = buf[iqs + 1];

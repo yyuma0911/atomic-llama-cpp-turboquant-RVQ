@@ -361,7 +361,7 @@ void ggml_cuda_mul_mat_tq(ggml_backend_cuda_context & ctx,
                            const ggml_tensor * src0,
                            const ggml_tensor * src1,
                            ggml_tensor * dst) {
-    GGML_ASSERT(src0->type == GGML_TYPE_TQ4_1S || src0->type == GGML_TYPE_TQ3_1S);
+    GGML_ASSERT(src0->type == GGML_TYPE_TQ4_1S); /* TQ3_1S has per-block sign patterns, uses the generic path */
     GGML_ASSERT(src1->type == GGML_TYPE_F32);
     GGML_ASSERT(dst->type  == GGML_TYPE_F32);
 

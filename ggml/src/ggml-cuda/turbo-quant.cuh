@@ -451,3 +451,33 @@ static __constant__ float TQ_WEIGHT_SIGNS[32] = {
     -1.0f, -1.0f, +1.0f, -1.0f, +1.0f, -1.0f, -1.0f, +1.0f,
     -1.0f, +1.0f, +1.0f, -1.0f, +1.0f, -1.0f, -1.0f, +1.0f
 };
+
+// TQ3_1S per-block sign pool (index 0 = TQ_WEIGHT_SIGNS).
+// Must match TQ3_1S_SIGN_POOL in ggml-turbo-quant.c; the 2-bit pattern
+// index is stored in the low bits of each block's d0 scale.
+static __constant__ float TQ3_1S_SIGN_POOL[4][32] = {
+    { /* pattern 0 = golden ratio */
+        +1.0f, -1.0f, +1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f,
+        -1.0f, -1.0f, +1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f,
+        -1.0f, -1.0f, +1.0f, -1.0f, +1.0f, -1.0f, -1.0f, +1.0f,
+        -1.0f, +1.0f, +1.0f, -1.0f, +1.0f, -1.0f, -1.0f, +1.0f
+    },
+    { /* pattern 1 */
+        +1.0f, +1.0f, +1.0f, +1.0f, +1.0f, +1.0f, +1.0f, -1.0f,
+        +1.0f, -1.0f, -1.0f, +1.0f, -1.0f, -1.0f, +1.0f, +1.0f,
+        -1.0f, +1.0f, +1.0f, +1.0f, -1.0f, -1.0f, -1.0f, -1.0f,
+        +1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f, -1.0f, -1.0f
+    },
+    { /* pattern 2 */
+        -1.0f, -1.0f, -1.0f, +1.0f, +1.0f, +1.0f, +1.0f, +1.0f,
+        -1.0f, +1.0f, +1.0f, +1.0f, +1.0f, -1.0f, -1.0f, -1.0f,
+        -1.0f, +1.0f, -1.0f, +1.0f, +1.0f, +1.0f, -1.0f, +1.0f,
+        +1.0f, -1.0f, +1.0f, -1.0f, +1.0f, +1.0f, +1.0f, -1.0f
+    },
+    { /* pattern 3 */
+        +1.0f, +1.0f, +1.0f, -1.0f, -1.0f, -1.0f, +1.0f, -1.0f,
+        -1.0f, -1.0f, +1.0f, +1.0f, +1.0f, -1.0f, +1.0f, +1.0f,
+        +1.0f, -1.0f, +1.0f, -1.0f, -1.0f, -1.0f, +1.0f, -1.0f,
+        -1.0f, -1.0f, +1.0f, +1.0f, +1.0f, +1.0f, +1.0f, +1.0f
+    }
+};
